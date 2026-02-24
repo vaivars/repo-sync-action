@@ -640,6 +640,7 @@ The actual source code of this library is in the `src` folder.
 - run `yarn build` or `npm run build` to produce a production version of [repo-file-sync-action](https://github.com/vaivars/repo-sync-action) in the `dist` folder.
 
 ### Credits
+
 This project was originally developed by ([@betahuhn](https://github.com/BetaHuhn))
 
 This Action was inspired by:
