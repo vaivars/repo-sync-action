@@ -1,0 +1,11 @@
+[tools]
+node = "24"
+
+[tasks.lint]
+run = "npm run lint"
+
+[tasks.build]
+run = "npm run build"
+
+[tasks.format]
+run = "npm run format"

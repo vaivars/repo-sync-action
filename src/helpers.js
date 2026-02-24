@@ -10,7 +10,7 @@ nunjucks.configure({ autoescape: true, trimBlocks: true, lstripBlocks: true })
 // From https://github.com/toniov/p-iteration/blob/master/lib/static-methods.js - MIT © Antonio V
 export async function forEach(array, callback) {
 	for (let index = 0; index < array.length; index++) {
-		// eslint-disable-next-line callback-return
+		 
 		await callback(array[index], index, array)
 	}
 }
@@ -85,16 +85,11 @@ export async function copy(src, dest, isDirectory, file) {
 
 		if (exclude !== undefined) {
 
-			// Check if file-path is one of the present filepaths in the excluded paths
-			// This has presedence over the single file, and therefore returns before the single file check
-			let filePath = ''
-			if (file.endsWith('/')) {
-				// File item is a folder
-				filePath = file
-			} else {
-				// File item is a file
-				filePath = file.split('\/').slice(0, -1).join('/') + '/'
-			}
+		// Check if file-path is one of the present filepaths in the excluded paths
+		// This has presedence over the single file, and therefore returns before the single file check
+		const filePath = file.endsWith('/')
+			? file // File item is a folder
+			: file.split('/').slice(0, -1).join('/') + '/' // File item is a file
 
 			if (exclude.includes(filePath)) {
 				core.debug(`Excluding file ${ file } since its path is included as one of the excluded paths.`)

@@ -6,8 +6,10 @@
   "type": "module",
   "scripts": {
     "lint": "eslint ./src",
+    "lint:fix": "eslint ./src --fix",
     "start": "node src/index.js",
-    "build": "ncc build src/index.js -o dist -m --license licenses.txt"
+    "build": "ncc build src/index.js -o dist -m --license licenses.txt",
+    "build:check": "npm run build && git diff --exit-code dist/"
   },
   "repository": {
     "type": "git",
@@ -36,16 +38,17 @@
     "@actions/github": "^9.0.0",
     "@octokit/plugin-throttling": "^11.0.3",
     "@putout/git-status-porcelain": "^3.0.0",
-    "action-input-parser": "^1.2.33",
+    "action-input-parser": "^1.2.38",
     "fs-extra": "^11.3.3",
     "js-yaml": "^4.1.1",
-    "node-readfiles": "0.2.0",
+    "node-readfiles": "^0.4.0",
     "nunjucks": "^3.2.4"
   },
   "devDependencies": {
-    "@betahuhn/config": "^1.2.0",
+    "@eslint/js": "^10.0.0",
     "@octokit/core": "^7.0.6",
-    "@vercel/ncc": "^0.34.0",
-    "eslint": "^10.0.2"
+    "@vercel/ncc": "^0.38.4",
+    "eslint": "^10.0.2",
+    "globals": "^15.0.0"
   }
 }
