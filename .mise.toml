@@ -1,5 +1,6 @@
 [tools]
 node = "24"
+dprint = "latest"
 
 [tasks.lint]
 run = "npm run lint"
@@ -8,4 +9,7 @@ run = "npm run lint"
 run = "npm run build"
 
 [tasks.format]
-run = "npm run format"
+run = "dprint fmt"
+
+[tasks."format:check"]
+run = "dprint check"

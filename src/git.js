@@ -1,7 +1,7 @@
-import { parse } from '@putout/git-status-porcelain'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
 import { throttling } from '@octokit/plugin-throttling'
+import { parse } from '@putout/git-status-porcelain'
 import * as path from 'path'
 
 import config from './config.js'
@@ -21,26 +21,34 @@ const {
 	SKIP_PR,
 	PR_BODY,
 	BRANCH_PREFIX,
-	FORK
+	FORK,
 } = config
 
 import { dedent, execCmd } from './helpers.js'
 
 export default class Git {
 	constructor() {
-		const octokit = github.getOctokit(GITHUB_TOKEN, {
-			baseUrl: process.env.GITHUB_API_URL || 'https://api.github.com',
-			throttle: {
-				onRateLimit: (retryAfter) => {
-					core.debug(`Hit GitHub API rate limit, retrying after ${ retryAfter }s`)
-					return true
+		const octokit = github.getOctokit(
+			GITHUB_TOKEN,
+			{
+				baseUrl: process.env.GITHUB_API_URL || 'https://api.github.com',
+				throttle: {
+					onRateLimit: (retryAfter) => {
+						core.debug(
+							`Hit GitHub API rate limit, retrying after ${retryAfter}s`,
+						)
+						return true
+					},
+					onSecondaryRateLimit: (retryAfter) => {
+						core.debug(
+							`Hit secondary GitHub API rate limit, retrying after ${retryAfter}s`,
+						)
+						return true
+					},
 				},
-				onSecondaryRateLimit: (retryAfter) => {
-					core.debug(`Hit secondary GitHub API rate limit, retrying after ${ retryAfter }s`)
-					return true
-				}
-			}
-		}, throttling)
+			},
+			throttling,
+		)
 
 		// We only need the rest client
 		this.github = octokit.rest
@@ -55,7 +63,9 @@ export default class Git {
 		// Set values to current repo
 		this.repo = repo
 		this.workingDir = path.join(TMP_DIR, repo.uniqueName)
-		this.gitUrl = `https://${ IS_INSTALLATION_TOKEN ? 'x-access-token:' : '' }${ IS_FINE_GRAINED ? 'oauth:' : '' }${ GITHUB_TOKEN }@${ repo.fullName }.git`
+		this.gitUrl = `https://${IS_INSTALLATION_TOKEN ? 'x-access-token:' : ''}${
+			IS_FINE_GRAINED ? 'oauth:' : ''
+		}${GITHUB_TOKEN}@${repo.fullName}.git`
 
 		await this.clone()
 		await this.setIdentity()
@@ -65,33 +75,33 @@ export default class Git {
 		if (FORK) {
 			const forkUrl = new URL(GITHUB_SERVER_URL)
 			forkUrl.username = GITHUB_TOKEN
-			forkUrl.pathname = `${ FORK }/${ this.repo.name }.git`
+			forkUrl.pathname = `${FORK}/${this.repo.name}.git`
 			await this.createFork()
 			await this.createRemote(forkUrl.toString())
-
 		}
 	}
 
 	async createFork() {
-		core.debug(`Creating fork with OWNER: ${ this.repo.user } and REPO: ${ this.repo.name }`)
+		core.debug(
+			`Creating fork with OWNER: ${this.repo.user} and REPO: ${this.repo.name}`,
+		)
 		await this.github.repos.createFork({
 			owner: this.repo.user,
-			repo: this.repo.name
+			repo: this.repo.name,
 		})
 	}
 
 	async createRemote(forkUrl) {
-		return execCmd(
-			`git remote add fork ${ forkUrl }`,
-			this.workingDir
-		)
+		return execCmd(`git remote add fork ${forkUrl}`, this.workingDir)
 	}
 
 	async clone() {
-		core.debug(`Cloning ${ this.repo.fullName } into ${ this.workingDir }`)
+		core.debug(`Cloning ${this.repo.fullName} into ${this.workingDir}`)
 
 		return execCmd(
-			`git clone --depth 1 ${ this.repo.branch !== 'default' ? '--branch "' + this.repo.branch + '"' : '' } ${ this.gitUrl } ${ this.workingDir }`
+			`git clone --depth 1 ${
+				this.repo.branch !== 'default' ? '--branch "' + this.repo.branch + '"' : ''
+			} ${this.gitUrl} ${this.workingDir}`,
 		)
 	}
 
@@ -107,101 +117,114 @@ export default class Git {
 			}
 		}
 
-		core.debug(`Setting git user to email: ${ email }, username: ${ username }`)
+		core.debug(`Setting git user to email: ${email}, username: ${username}`)
 
 		return execCmd(
-			`git config --local user.name "${ username }" && git config --local user.email "${ email }"`,
-			this.workingDir
+			`git config --local user.name "${username}" && git config --local user.email "${email}"`,
+			this.workingDir,
 		)
 	}
 
 	async getBaseBranch() {
 		this.baseBranch = await execCmd(
 			`git rev-parse --abbrev-ref HEAD`,
-			this.workingDir
+			this.workingDir,
 		)
 	}
 
 	async createPrBranch() {
-		const prefix = BRANCH_PREFIX.replace('SOURCE_REPO_NAME', GITHUB_REPOSITORY.split('/')[1])
+		const prefix = BRANCH_PREFIX.replace(
+			'SOURCE_REPO_NAME',
+			GITHUB_REPOSITORY.split('/')[1],
+		)
 
-		let newBranch = path.join(prefix, this.repo.branch).replace(/\\/g, '/').replace(/\/\./g, '/')
+		let newBranch = path
+			.join(prefix, this.repo.branch)
+			.replace(/\\/g, '/')
+			.replace(/\/\./g, '/')
 
 		if (OVERWRITE_EXISTING_PR === false) {
-			newBranch += `-${ Math.round((new Date()).getTime() / 1000) }`
+			newBranch += `-${Math.round(new Date().getTime() / 1000)}`
 		}
 
-		core.debug(`Creating PR Branch ${ newBranch }`)
+		core.debug(`Creating PR Branch ${newBranch}`)
 
-		await execCmd(
-			`git checkout -b "${ newBranch }"`,
-			this.workingDir
-		)
+		await execCmd(`git checkout -b "${newBranch}"`, this.workingDir)
 
 		this.prBranch = newBranch
 	}
 
 	async add(file) {
-		return execCmd(
-			`git add -f "${ file }"`,
-			this.workingDir
-		)
+		return execCmd(`git add -f "${file}"`, this.workingDir)
 	}
 
 	isOneCommitPush() {
-		return github.context.eventName === 'push' && github.context.payload.commits.length === 1
+		return (
+			github.context.eventName === 'push'
+			&& github.context.payload.commits.length === 1
+		)
 	}
 
 	originalCommitMessage() {
 		return github.context.payload.commits[0].message
 	}
 
-	parseGitDiffOutput(string) { // parses git diff output and returns a dictionary mapping the file path to the diff output for this file
+	parseGitDiffOutput(string) {
+		// parses git diff output and returns a dictionary mapping the file path to the diff output for this file
 		// split diff into separate entries for separate files. \ndiff --git should be a reliable way to detect the separation, as content of files is always indented
-		return `\n${ string }`.split('\ndiff --git').slice(1).reduce((resultDict, fileDiff) => {
-			const lines = fileDiff.split('\n')
-			const lastHeaderLineIndex = lines.findIndex((line) => line.startsWith('+++'))
-			if (lastHeaderLineIndex === -1) return resultDict // ignore binary files
+		return `\n${string}`
+			.split('\ndiff --git')
+			.slice(1)
+			.reduce((resultDict, fileDiff) => {
+				const lines = fileDiff.split('\n')
+				const lastHeaderLineIndex = lines.findIndex((line) => line.startsWith('+++'))
+				if (lastHeaderLineIndex === -1) return resultDict // ignore binary files
 
-		const plainDiff = lines.slice(lastHeaderLineIndex + 1).join('\n').trim()
-		const filePath = lines[lastHeaderLineIndex].startsWith('+++ b/')
-			? lines[lastHeaderLineIndex].slice(6) // remove '+++ b/' for every file except removed files
-			: lines[lastHeaderLineIndex - 1].slice(6) // remove '--- a/' for removed files
-		return { ...resultDict, [filePath]: plainDiff }
-		}, {})
+				const plainDiff = lines
+					.slice(lastHeaderLineIndex + 1)
+					.join('\n')
+					.trim()
+				const filePath = lines[lastHeaderLineIndex].startsWith('+++ b/')
+					? lines[lastHeaderLineIndex].slice(6) // remove '+++ b/' for every file except removed files
+					: lines[lastHeaderLineIndex - 1].slice(6) // remove '--- a/' for removed files
+				return { ...resultDict, [filePath]: plainDiff }
+			}, {})
 	}
 
-	async getChangesFromLastCommit(source) { // gets array of git diffs for the source, which either can be a file or a dict
+	async getChangesFromLastCommit(source) {
+		// gets array of git diffs for the source, which either can be a file or a dict
 		if (this.lastCommitChanges === undefined) {
 			const diff = await this.github.repos.compareCommits({
 				mediaType: {
-					format: 'diff'
+					format: 'diff',
 				},
 				owner: github.context.payload.repository.owner.name,
 				repo: github.context.payload.repository.name,
 				base: github.context.payload.before,
-				head: github.context.payload.after
+				head: github.context.payload.after,
 			})
 			this.lastCommitChanges = this.parseGitDiffOutput(diff.data)
 		}
 		if (source.endsWith('/')) {
-			return Object.keys(this.lastCommitChanges).filter((filePath) => filePath.startsWith(source)).reduce((result, key) => [ ...result, this.lastCommitChanges[key] ], [])
+			return Object.keys(this.lastCommitChanges)
+				.filter((filePath) => filePath.startsWith(source))
+				.reduce((result, key) => [...result, this.lastCommitChanges[key]], [])
 		} else {
-			return this.lastCommitChanges[source] === undefined ? [] : [ this.lastCommitChanges[source] ]
+			return this.lastCommitChanges[source] === undefined
+				? []
+				: [this.lastCommitChanges[source]]
 		}
 	}
 
 	async getLastCommitSha() {
-		this.lastCommitSha = await execCmd(
-			`git rev-parse HEAD`,
-			this.workingDir
-		)
+		this.lastCommitSha = await execCmd(`git rev-parse HEAD`, this.workingDir)
 	}
 
-	async changes(destination) { // gets array of git diffs for the destination, which either can be a file or a dict
+	async changes(destination) {
+		// gets array of git diffs for the destination, which either can be a file or a dict
 		const output = await execCmd(
-			`git diff HEAD ${ destination }`,
-			this.workingDir
+			`git diff HEAD ${destination}`,
+			this.workingDir,
 		)
 		return Object.values(this.parseGitDiffOutput(output))
 	}
@@ -209,58 +232,54 @@ export default class Git {
 	async hasChanges() {
 		const statusOutput = await execCmd(
 			`git status --porcelain`,
-			this.workingDir
+			this.workingDir,
 		)
 
 		return parse(statusOutput).length !== 0
 	}
 
 	async commit(msg) {
-		let message = msg !== undefined ? msg : `${ COMMIT_PREFIX } synced file(s) with ${ GITHUB_REPOSITORY }`
+		let message = msg !== undefined
+			? msg
+			: `${COMMIT_PREFIX} synced file(s) with ${GITHUB_REPOSITORY}`
 		if (COMMIT_BODY) {
-			message += `\n\n${ COMMIT_BODY }`
+			message += `\n\n${COMMIT_BODY}`
 		}
 		return execCmd(
-			`git commit -m '${ message.replace(/'/g, '\'\\\'\'') }'`,
-			this.workingDir
+			`git commit -m '${message.replace(/'/g, "'\\''")}'`,
+			this.workingDir,
 		)
 	}
 
 	// Returns a git tree parsed for the specified commit sha
 	async getTreeId(commitSha) {
-		core.debug(`Getting treeId for commit ${ commitSha }`)
-		const output = (await execCmd(
-			`git cat-file -p ${ commitSha }`,
-			this.workingDir
-		)).split('\n')
+		core.debug(`Getting treeId for commit ${commitSha}`)
+		const output = (
+			await execCmd(`git cat-file -p ${commitSha}`, this.workingDir)
+		).split('\n')
 
-		const commitHeaders = output.slice(0, output.findIndex((e) => e === ''))
-		const tree = commitHeaders.find((e) => e.startsWith('tree')).replace('tree ', '')
+		const commitHeaders = output.slice(
+			0,
+			output.findIndex((e) => e === ''),
+		)
+		const tree = commitHeaders
+			.find((e) => e.startsWith('tree'))
+			.replace('tree ', '')
 
 		return tree
 	}
 
 	async getTreeDiff(referenceTreeId, differenceTreeId) {
 		const output = await execCmd(
-			`git diff-tree ${ referenceTreeId } ${ differenceTreeId } -r`,
-			this.workingDir
+			`git diff-tree ${referenceTreeId} ${differenceTreeId} -r`,
+			this.workingDir,
 		)
 
 		const diff = []
 		for (const line of output.split('\n')) {
-			const splitted = line
-				.replace(/^:/, '')
-				.replace('\t', ' ')
-				.split(' ')
+			const splitted = line.replace(/^:/, '').replace('\t', ' ').split(' ')
 
-			const [
-				newMode,
-				previousMode,
-				newBlob,
-				previousBlob,
-				change,
-				path
-			] = splitted
+			const [newMode, previousMode, newBlob, previousBlob, change, path] = splitted
 
 			diff.push({
 				newMode,
@@ -268,7 +287,7 @@ export default class Git {
 				newBlob,
 				previousBlob,
 				change,
-				path
+				path,
 			})
 		}
 
@@ -277,11 +296,11 @@ export default class Git {
 
 	// Creates the blob objects in GitHub for the files that are not in the previous commit only
 	async uploadGitHubBlob(blob) {
-		core.debug(`Uploading GitHub Blob for blob ${ blob }`)
+		core.debug(`Uploading GitHub Blob for blob ${blob}`)
 		const fileContent = await execCmd(
-			`git cat-file -p ${ blob }`,
+			`git cat-file -p ${blob}`,
 			this.workingDir,
-			false
+			false,
 		)
 
 		// Creates the blob. We don't need to store the response because the local sha is the same and we can use it to reference the blob
@@ -289,15 +308,15 @@ export default class Git {
 			owner: this.repo.user,
 			repo: this.repo.name,
 			content: Buffer.from(fileContent).toString('base64'),
-			encoding: 'base64'
+			encoding: 'base64',
 		})
 	}
 
 	// Gets the commit list in chronological order
 	async getCommitsToPush() {
 		const output = await execCmd(
-			`git log --format=%H --reverse ${ SKIP_PR === false ? `` : `origin/` }${ this.baseBranch }..HEAD`,
-			this.workingDir
+			`git log --format=%H --reverse ${SKIP_PR === false ? `` : `origin/`}${this.baseBranch}..HEAD`,
+			this.workingDir,
 		)
 
 		const commits = output.split('\n')
@@ -306,8 +325,8 @@ export default class Git {
 
 	async getCommitMessage(commitSha) {
 		return await execCmd(
-			`git log -1 --format=%B ${ commitSha }`,
-			this.workingDir
+			`git log -1 --format=%B ${commitSha}`,
+			this.workingDir,
 		)
 	}
 
@@ -323,10 +342,10 @@ export default class Git {
 					owner: this.repo.user,
 					repo: this.repo.name,
 					sha: this.lastCommitSha,
-					ref: 'refs/heads/' + this.prBranch
+					ref: 'refs/heads/' + this.prBranch,
 				})
 
-				core.debug(`Created new branch ${ this.prBranch }`)
+				core.debug(`Created new branch ${this.prBranch}`)
 			} catch (error) {
 				// If the branch exists ignores the error
 				if (error.message !== 'Reference already exists') throw error
@@ -337,38 +356,34 @@ export default class Git {
 			await this.createGithubCommit(commit)
 		}
 
-		core.debug(`Updating branch ${ SKIP_PR === false ? this.prBranch : this.baseBranch } ref`)
+		core.debug(
+			`Updating branch ${SKIP_PR === false ? this.prBranch : this.baseBranch} ref`,
+		)
 		await this.github.git.updateRef({
 			owner: this.repo.user,
 			repo: this.repo.name,
-			ref: `heads/${ SKIP_PR === false ? this.prBranch : this.baseBranch }`,
+			ref: `heads/${SKIP_PR === false ? this.prBranch : this.baseBranch}`,
 			sha: this.lastCommitSha,
-			force: true
+			force: true,
 		})
 		core.debug(`Commit using GitHub API completed`)
 	}
 
 	async status() {
-		return execCmd(
-			`git status`,
-			this.workingDir
-		)
+		return execCmd(`git status`, this.workingDir)
 	}
 
 	async push() {
 		if (FORK) {
 			return execCmd(
-				`git push -u fork ${ this.prBranch } --force`,
-				this.workingDir
+				`git push -u fork ${this.prBranch} --force`,
+				this.workingDir,
 			)
 		}
 		if (IS_INSTALLATION_TOKEN) {
 			return await this.createGithubVerifiedCommits()
 		}
-		return execCmd(
-			`git push ${ this.gitUrl } --force`,
-			this.workingDir
-		)
+		return execCmd(`git push ${this.gitUrl} --force`, this.workingDir)
 	}
 
 	async findExistingPr() {
@@ -376,7 +391,7 @@ export default class Git {
 			owner: this.repo.user,
 			repo: this.repo.name,
 			state: 'open',
-			head: `${ FORK ? FORK : this.repo.user }:${ this.prBranch }`
+			head: `${FORK ? FORK : this.repo.user}:${this.prBranch}`,
 		})
 
 		this.existingPr = data[0]
@@ -392,8 +407,8 @@ export default class Git {
 			body: dedent(`
 				⚠️ This PR is being automatically resynced ⚠️
 
-				${ this.existingPr.body }
-			`)
+				${this.existingPr.body}
+			`),
 		})
 	}
 
@@ -402,21 +417,26 @@ export default class Git {
 			owner: this.repo.user,
 			repo: this.repo.name,
 			pull_number: this.existingPr.number,
-			body: this.existingPr.body.replace('⚠️ This PR is being automatically resynced ⚠️', '')
+			body: this.existingPr.body.replace(
+				'⚠️ This PR is being automatically resynced ⚠️',
+				'',
+			),
 		})
 	}
 
 	async createOrUpdatePr(changedFiles, title) {
 		const body = dedent(`
-			synced local file(s) with [${ GITHUB_REPOSITORY }](${ GITHUB_SERVER_URL }/${ GITHUB_REPOSITORY }).
+			synced local file(s) with [${GITHUB_REPOSITORY}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}).
 
-			${ PR_BODY }
+			${PR_BODY}
 
-			${ changedFiles }
+			${changedFiles}
 
 			---
 
-			This PR was created automatically by the [repo-file-sync-action](https://github.com/BetaHuhn/repo-file-sync-action) workflow run [#${ process.env.GITHUB_RUN_ID || 0 }](${ GITHUB_SERVER_URL }/${ GITHUB_REPOSITORY }/actions/runs/${ process.env.GITHUB_RUN_ID || 0 })
+			This PR was created automatically by the [repo-file-sync-action](https://github.com/BetaHuhn/repo-file-sync-action) workflow run [#${
+			process.env.GITHUB_RUN_ID || 0
+		}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID || 0})
 		`)
 
 		if (this.existingPr) {
@@ -425,9 +445,9 @@ export default class Git {
 			const { data } = await this.github.pulls.update({
 				owner: this.repo.user,
 				repo: this.repo.name,
-				title: `${ COMMIT_PREFIX } synced file(s) with ${ GITHUB_REPOSITORY }`,
+				title: `${COMMIT_PREFIX} synced file(s) with ${GITHUB_REPOSITORY}`,
 				pull_number: this.existingPr.number,
-				body: body
+				body: body,
 			})
 
 			return data
@@ -438,10 +458,12 @@ export default class Git {
 		const { data } = await this.github.pulls.create({
 			owner: this.repo.user,
 			repo: this.repo.name,
-			title: title === undefined ? `${ COMMIT_PREFIX } synced file(s) with ${ GITHUB_REPOSITORY }` : title,
+			title: title === undefined
+				? `${COMMIT_PREFIX} synced file(s) with ${GITHUB_REPOSITORY}`
+				: title,
 			body: body,
-			head: `${ FORK ? FORK : this.repo.user }:${ this.prBranch }`,
-			base: this.baseBranch
+			head: `${FORK ? FORK : this.repo.user}:${this.prBranch}`,
+			base: this.baseBranch,
 		})
 
 		this.existingPr = data
@@ -454,7 +476,7 @@ export default class Git {
 			owner: this.repo.user,
 			repo: this.repo.name,
 			issue_number: this.existingPr.number,
-			labels: labels
+			labels: labels,
 		})
 	}
 
@@ -463,7 +485,7 @@ export default class Git {
 			owner: this.repo.user,
 			repo: this.repo.name,
 			issue_number: this.existingPr.number,
-			assignees: assignees
+			assignees: assignees,
 		})
 	}
 
@@ -472,7 +494,7 @@ export default class Git {
 			owner: this.repo.user,
 			repo: this.repo.name,
 			pull_number: this.existingPr.number,
-			reviewers: reviewers
+			reviewers: reviewers,
 		})
 	}
 
@@ -481,26 +503,28 @@ export default class Git {
 			owner: this.repo.user,
 			repo: this.repo.name,
 			pull_number: this.existingPr.number,
-			team_reviewers: reviewers
+			team_reviewers: reviewers,
 		})
 	}
 
 	async createGithubCommit(commitSha) {
-		const [ treeId, parentTreeId, commitMessage ] = await Promise.all([
-			this.getTreeId(`${ commitSha }`),
-			this.getTreeId(`${ commitSha }~1`),
-			this.getCommitMessage(commitSha)
+		const [treeId, parentTreeId, commitMessage] = await Promise.all([
+			this.getTreeId(`${commitSha}`),
+			this.getTreeId(`${commitSha}~1`),
+			this.getCommitMessage(commitSha),
 		])
 
 		const treeDiff = await this.getTreeDiff(treeId, parentTreeId)
 		core.debug(`Uploading the blobs to GitHub`)
-		const blobsToCreate = treeDiff
-			.filter((e) => e.newMode !== '000000') // Do not upload the blob if it is being removed
+		const blobsToCreate = treeDiff.filter((e) => e.newMode !== '000000') // Do not upload the blob if it is being removed
 
-		await Promise.all(blobsToCreate.map((e) => this.uploadGitHubBlob(e.newBlob)))
+		await Promise.all(
+			blobsToCreate.map((e) => this.uploadGitHubBlob(e.newBlob)),
+		)
 		core.debug(`Creating a GitHub tree`)
 		const tree = treeDiff.map((e) => {
-			if (e.newMode === '000000') { // Set the sha to null to remove the file
+			if (e.newMode === '000000') {
+				// Set the sha to null to remove the file
 				e.newMode = e.previousMode
 				e.newBlob = null
 			}
@@ -509,7 +533,7 @@ export default class Git {
 				path: e.path,
 				mode: e.newMode,
 				type: 'blob',
-				sha: e.newBlob
+				sha: e.newBlob,
 			}
 
 			return entry
@@ -521,11 +545,11 @@ export default class Git {
 				owner: this.repo.user,
 				repo: this.repo.name,
 				tree,
-				base_tree: parentTreeId
+				base_tree: parentTreeId,
 			})
 			treeSha = request.data.sha
 		} catch (error) {
-			error.message = `Cannot create a new GitHub Tree: ${ error.message }`
+			error.message = `Cannot create a new GitHub Tree: ${error.message}`
 			throw error
 		}
 
@@ -534,8 +558,8 @@ export default class Git {
 			owner: this.repo.user,
 			repo: this.repo.name,
 			message: commitMessage,
-			parents: [ this.lastCommitSha ],
-			tree: treeSha
+			parents: [this.lastCommitSha],
+			tree: treeSha,
 		})
 		this.lastCommitSha = request.data.sha
 	}
