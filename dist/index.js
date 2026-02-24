@@ -39807,6 +39807,23 @@ __webpack_unused_export__ = defaultContentType
 /******/ }
 /******/ 
 /************************************************************************/
+/******/ /* webpack/runtime/define property getters */
+/******/ (() => {
+/******/ 	// define getter functions for harmony exports
+/******/ 	__nccwpck_require__.d = (exports, definition) => {
+/******/ 		for(var key in definition) {
+/******/ 			if(__nccwpck_require__.o(definition, key) && !__nccwpck_require__.o(exports, key)) {
+/******/ 				Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+/******/ 			}
+/******/ 		}
+/******/ 	};
+/******/ })();
+/******/ 
+/******/ /* webpack/runtime/hasOwnProperty shorthand */
+/******/ (() => {
+/******/ 	__nccwpck_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
+/******/ })();
+/******/ 
 /******/ /* webpack/runtime/compat */
 /******/ 
 /******/ if (typeof __nccwpck_require__ !== 'undefined') __nccwpck_require__.ab = new URL('.', import.meta.url).pathname.slice(import.meta.url.match(/^file:\/\/\/\w:/) ? 1 : 0, -1) + "/";
@@ -39814,6 +39831,13 @@ __webpack_unused_export__ = defaultContentType
 /************************************************************************/
 var __webpack_exports__ = {};
 
+// EXPORTS
+__nccwpck_require__.d(__webpack_exports__, {
+  e: () => (/* binding */ run)
+});
+
+;// CONCATENATED MODULE: external "url"
+const external_url_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("url");
 ;// CONCATENATED MODULE: external "os"
 const external_os_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("os");
 ;// CONCATENATED MODULE: ./node_modules/@actions/core/lib/utils.js
@@ -52179,6 +52203,7 @@ class Git {
 
 
 
+
 const {
 	COMMIT_EACH_FILE,
 	COMMIT_PREFIX: src_COMMIT_PREFIX,
@@ -52436,8 +52461,12 @@ async function run() {
 	info('Cleanup complete')
 }
 
-run().catch((err) => {
-	setFailed(err.message)
-	core_debug(err)
-})
+if (import.meta.url === (0,external_url_namespaceObject.pathToFileURL)(process.argv[1]).href) {
+	run().catch((err) => {
+		setFailed(err.message)
+		core_debug(err)
+	})
+}
 
+var __webpack_exports__run = __webpack_exports__.e;
+export { __webpack_exports__run as run };

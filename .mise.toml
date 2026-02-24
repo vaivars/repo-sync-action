@@ -13,3 +13,7 @@ run = "dprint fmt"
 
 [tasks."format:check"]
 run = "dprint check"
+
+[tasks.test]
+description = "Run local integration test with mocked git"
+run = "node tests/local-sync.test.js"
