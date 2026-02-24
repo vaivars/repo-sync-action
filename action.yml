@@ -1,6 +1,6 @@
-name: 'Repo File Sync Action'
-description: 'GitHub Action to Sync Files like Workflows Between Repositories. Fork with repo_groups support.'
-author: 'BetaHuhn'
+name: 'File sync over across repos action'
+description: 'GitHub Action to Sync Files like Workflows Between Repositories.'
+author: 'Vaivars'
 
 inputs:
   GH_PAT:
@@ -12,10 +12,10 @@ inputs:
       GitHub App Installation Token to used to access repos
     required: false
   CONFIG_PATH:
-    description: | 
+    description: |
       The path for the sync configuration file
     required: false
-  IS_FINE_GRAINED: 
+  IS_FINE_GRAINED:
     description: |
       Label GH_PAT as a fine grained token
     required: false
