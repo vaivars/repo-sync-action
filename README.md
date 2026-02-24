@@ -639,15 +639,8 @@ The actual source code of this library is in the `src` folder.
 - run `yarn start` or `npm run start` to run the Action locally.
 - run `yarn build` or `npm run build` to produce a production version of [repo-file-sync-action](https://github.com/vaivars/repo-sync-action) in the `dist` folder.
 
-## ❔ About
-
-This project was developed by me ([@betahuhn](https://github.com/BetaHuhn)) in my free time. If you want to support me:
-
-[![Donate via PayPal](https://img.shields.io/badge/paypal-donate-009cde.svg)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=394RTSBEEEFEE)
-
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/F1F81S2RK)
-
 ### Credits
+This project was originally developed by ([@betahuhn](https://github.com/BetaHuhn))
 
 This Action was inspired by:
 
