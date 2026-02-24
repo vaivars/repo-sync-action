@@ -1,7 +1,6 @@
 import { parse } from '@putout/git-status-porcelain'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
-import { GitHub, getOctokitOptions } from '@actions/github/lib/utils.js'
 import { throttling } from '@octokit/plugin-throttling'
 import * as path from 'path'
 
@@ -29,9 +28,7 @@ import { dedent, execCmd } from './helpers.js'
 
 export default class Git {
 	constructor() {
-		const Octokit = GitHub.plugin(throttling)
-
-		const options = getOctokitOptions(GITHUB_TOKEN, {
+		const octokit = github.getOctokit(GITHUB_TOKEN, {
 			baseUrl: process.env.GITHUB_API_URL || 'https://api.github.com',
 			throttle: {
 				onRateLimit: (retryAfter) => {
@@ -43,9 +40,7 @@ export default class Git {
 					return true
 				}
 			}
-		})
-
-		const octokit = new Octokit(options)
+		}, throttling)
 
 		// We only need the rest client
 		this.github = octokit.rest
@@ -168,14 +163,11 @@ export default class Git {
 			const lastHeaderLineIndex = lines.findIndex((line) => line.startsWith('+++'))
 			if (lastHeaderLineIndex === -1) return resultDict // ignore binary files
 
-			const plainDiff = lines.slice(lastHeaderLineIndex + 1).join('\n').trim()
-			let filePath = ''
-			if (lines[lastHeaderLineIndex].startsWith('+++ b/')) { // every file except removed files
-				filePath = lines[lastHeaderLineIndex].slice(6) // remove '+++ b/'
-			} else { // for removed file need to use header line with filename before deletion
-				filePath = lines[lastHeaderLineIndex - 1].slice(6) // remove '--- a/'
-			}
-			return { ...resultDict, [filePath]: plainDiff }
+		const plainDiff = lines.slice(lastHeaderLineIndex + 1).join('\n').trim()
+		const filePath = lines[lastHeaderLineIndex].startsWith('+++ b/')
+			? lines[lastHeaderLineIndex].slice(6) // remove '+++ b/' for every file except removed files
+			: lines[lastHeaderLineIndex - 1].slice(6) // remove '--- a/' for removed files
+		return { ...resultDict, [filePath]: plainDiff }
 		}, {})
 	}
 

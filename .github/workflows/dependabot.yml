@@ -1,16 +1,22 @@
-name: Dependabot PR CI
-on:
-  schedule:
-    - cron: "0 */6 * * *" # Every six hours
-  workflow_dispatch:
+name: Dependabot auto-approve
+on: pull_request
+
 jobs:
-  auto-merge:
-    name: Auto Merge
+  dependabot:
+    permissions:
+      pull-requests: read
     runs-on: ubuntu-latest
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.repository == 'vaivars/repo-sync-action'
     steps:
-      - name: Merge minor/patch updates
-        uses: koj-co/dependabot-pr-action@master
-        with:
-          token: ${{ secrets.GH_PAT }}
-          merge-minor: true
-          merge-patch: true
+    - name: Fetch Dependabot metadata
+      id: dependabot-metadata
+      uses: dependabot/fetch-metadata@v2
+      with:
+        alert-lookup: true
+        compat-lookup: true
+        github-token: "${{ secrets.PAT_TOKEN }}"
+    - name: Approve a PR
+      run: gh pr review --approve "$PR_URL"
+      env:
+        PR_URL: ${{github.event.pull_request.html_url}}
+        GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
