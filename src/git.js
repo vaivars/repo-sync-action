@@ -277,7 +277,7 @@ export default class Git {
 
 		const diff = []
 		for (const line of output.split('\n')) {
-			const splitted = line.replace(/^:/, '').replace('\t', ' ').split(' ')
+			const splitted = line.replace(/^:/, '').replace(/\t/g, ' ').split(' ')
 
 			const [newMode, previousMode, newBlob, previousBlob, change, path] = splitted
 
