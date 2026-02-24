@@ -1,0 +1,18 @@
+repo_groups:
+  backend:
+    - user/api
+    - user/worker
+  frontend:
+    - user/web
+    - user/mobile
+
+group:
+  - files:
+      - source: .github/workflows/test.yml
+        dest: .github/workflows/test.yml
+    repos: backend
+  
+  - files:
+      - source: LICENSE
+        dest: LICENSE
+    repos: frontend

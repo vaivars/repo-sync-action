@@ -1,0 +1,15 @@
+repo_groups:
+  main_repos:
+    - user/repo1
+    - user/repo2
+
+group:
+  - files:
+      - source: .github/workflows/build.yml
+    repos: main_repos
+  
+  - files:
+      - source: README.md
+    repos: |
+      user/repo3
+      user/repo4

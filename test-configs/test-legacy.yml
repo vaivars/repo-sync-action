@@ -1,0 +1,12 @@
+group:
+  - files:
+      - source: .github/workflows/test.yml
+        dest: .github/workflows/test.yml
+    repos: |
+      user/repo1
+      user/repo2
+      user/repo3
+
+user/repo4:
+  - LICENSE
+  - .gitignore

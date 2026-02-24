@@ -2,7 +2,9 @@
   
 # Repo File Sync Action
 
-[![Build CI](https://github.com/BetaHuhn/repo-file-sync-action/workflows/Test%20CI/badge.svg)](https://github.com/BetaHuhn/repo-file-sync-action/actions?query=workflow%3A%22Test+CI%22) [![GitHub](https://img.shields.io/github/license/mashape/apistatus.svg)](https://github.com/BetaHuhn/repo-file-sync-action/blob/master/LICENSE) ![David](https://img.shields.io/david/betahuhn/repo-file-sync-action)
+> **Note**: This is a hard fork of [vaivars/repo-sync-action](https://github.com/vaivars/repo-sync-action) with additional features including repository groups support.
+
+[![GitHub](https://img.shields.io/github/license/mashape/apistatus.svg)](https://github.com/vaivars/repo-sync-action/blob/master/LICENSE)
 
 Keep files like Action workflows or entire directories in sync between multiple repositories.
 
@@ -10,7 +12,7 @@ Keep files like Action workflows or entire directories in sync between multiple 
 
 ## 👋 Introduction
 
-With [repo-file-sync-action](https://github.com/BetaHuhn/repo-file-sync-action) you can sync files, like workflow `.yml` files, configuration files or whole directories between repositories or branches. It works by running a GitHub Action in your main repository everytime you push something to that repo. The action will use a `sync.yml` config file to figure out which files it should sync where. If it finds a file which is out of sync it will open a pull request in the target repository with the changes.
+With [repo-file-sync-action](https://github.com/vaivars/repo-sync-action) you can sync files, like workflow `.yml` files, configuration files or whole directories between repositories or branches. It works by running a GitHub Action in your main repository everytime you push something to that repo. The action will use a `sync.yml` config file to figure out which files it should sync where. If it finds a file which is out of sync it will open a pull request in the target repository with the changes.
 
 ## 🚀 Features
 
@@ -46,14 +48,14 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@main
       - name: Run GitHub File Sync
-        uses: BetaHuhn/repo-file-sync-action@v1
+        uses: vaivars/repo-sync-action@v1
         with:
           GH_PAT: ${{ secrets.GH_PAT }}
 ```
 
 #### Token
 
-In order for the Action to access your repositories you have to specify a [Personal Access token](https://docs.github.com/en/free-pro-team@latest/github/authenticating-to-github/creating-a-personal-access-token) as the value for `GH_PAT` (`GITHUB_TOKEN` will **not** work). The PAT needs the full repo scope ([#31](https://github.com/BetaHuhn/repo-file-sync-action/discussions/31#discussioncomment-674804)).
+In order for the Action to access your repositories you have to specify a [Personal Access token](https://docs.github.com/en/free-pro-team@latest/github/authenticating-to-github/creating-a-personal-access-token) as the value for `GH_PAT` (`GITHUB_TOKEN` will **not** work). The PAT needs the full repo scope ([#31](https://github.com/vaivars/repo-sync-action/discussions/31#discussioncomment-674804)).
 
 It is recommended to set the token as a
 [Repository Secret](https://docs.github.com/en/free-pro-team@latest/actions/reference/encrypted-secrets#creating-encrypted-secrets-for-a-repository).
@@ -87,20 +89,20 @@ More info on how to specify what files to sync where [below](#%EF%B8%8F-sync-con
 To always use the latest version of the action add the `latest` tag to the action name like this:
 
 ```yml
-uses: BetaHuhn/repo-file-sync-action@latest
+uses: vaivars/repo-sync-action@latest
 ```
 
 If you want to make sure that your workflow doesn't suddenly break when a new major version is released, use the `v1` tag instead (recommended usage):
 
 ```yml
-uses: BetaHuhn/repo-file-sync-action@v1
+uses: vaivars/repo-sync-action@v1
 ```
 
 With the `v1` tag you will always get the latest non-breaking version which will include potential bug fixes in the future. If you use a specific version, make sure to regularly check if a new version is available, or enable Dependabot.
 
 ## ⚙️ Action Inputs
 
-Here are all the inputs [repo-file-sync-action](https://github.com/BetaHuhn/repo-file-sync-action) takes:
+Here are all the inputs [repo-file-sync-action](https://github.com/vaivars/repo-sync-action) takes:
 
 | Key | Value | Required | Default |
 | ------------- | ------------- | ------------- | ------------- |
@@ -134,7 +136,7 @@ The action sets the `pull_request_urls` output to the URLs of any created Pull R
 
 ## 🛠️ Sync Configuration
 
-In order to tell [repo-file-sync-action](https://github.com/BetaHuhn/repo-file-sync-action) what files to sync where, you have to create a `sync.yml` file in the `.github` directory of your main repository (see [action-inputs](#%EF%B8%8F-action-inputs) on how to change the location).
+In order to tell [repo-file-sync-action](https://github.com/vaivars/repo-sync-action) what files to sync where, you have to create a `sync.yml` file in the `.github` directory of your main repository (see [action-inputs](#%EF%B8%8F-action-inputs) on how to change the location).
 
 The top-level key should be used to specify the target repository in the format `username`/`repository-name`@`branch`, after that you can list all the files you want to sync to that individual repository:
 
@@ -305,6 +307,50 @@ group:
       user/repo4
 ```
 
+### Repository Groups
+
+To avoid repeating the same repository lists across multiple groups, you can define reusable repository groups with the `repo_groups` key:
+
+```yml
+repo_groups:
+  backend_services:
+    - user/api-service
+    - user/worker-service
+    - user/admin-service
+  frontend_apps:
+    - user/web-app
+    - user/mobile-app
+
+group:
+  - files:
+      - source: .github/workflows/test.yml
+        dest: .github/workflows/test.yml
+    repos: backend_services
+  
+  - files:
+      - source: .github/workflows/deploy.yml
+        dest: .github/workflows/deploy.yml
+    repos: frontend_apps
+```
+
+You can still use inline repository lists alongside groups:
+
+```yml
+repo_groups:
+  main_repos:
+    - user/repo1
+    - user/repo2
+
+group:
+  - files:
+      - source: LICENSE
+    repos: |
+      user/repo3
+      user/repo4
+```
+
+> **Note:** When `repos` is set to a single word matching a group name (like `backend_services`), it will reference that group. Multi-line strings are always treated as inline repository lists.
+
 ### Syncing branches
 
 You can also sync different branches from the same or different repositories (#51). For example, a repository named `foo/bar` with branch `main`, and `sync.yml` contents:
@@ -354,13 +400,13 @@ group:
 
 ### Custom labels
 
-By default [repo-file-sync-action](https://github.com/BetaHuhn/repo-file-sync-action) will add the `sync` label to every PR it creates. You can turn this off by setting `PR_LABELS` to false, or specify your own labels:
+By default [repo-file-sync-action](https://github.com/vaivars/repo-sync-action) will add the `sync` label to every PR it creates. You can turn this off by setting `PR_LABELS` to false, or specify your own labels:
 
 **.github/workflows/sync.yml**
 
 ```yml
 - name: Run GitHub File Sync
-  uses: BetaHuhn/repo-file-sync-action@v1
+  uses: vaivars/repo-sync-action@v1
   with:
     GH_PAT: ${{ secrets.GH_PAT }}
     PR_LABELS: |
@@ -370,13 +416,13 @@ By default [repo-file-sync-action](https://github.com/BetaHuhn/repo-file-sync-ac
 
 ### Assign a user to the PR
 
-You can tell [repo-file-sync-action](https://github.com/BetaHuhn/repo-file-sync-action) to assign users to the PR with `ASSIGNEES`:
+You can tell [repo-file-sync-action](https://github.com/vaivars/repo-sync-action) to assign users to the PR with `ASSIGNEES`:
 
 **.github/workflows/sync.yml**
 
 ```yml
 - name: Run GitHub File Sync
-  uses: BetaHuhn/repo-file-sync-action@v1
+  uses: vaivars/repo-sync-action@v1
   with:
     GH_PAT: ${{ secrets.GH_PAT }}
     ASSIGNEES: BetaHuhn
@@ -384,13 +430,13 @@ You can tell [repo-file-sync-action](https://github.com/BetaHuhn/repo-file-sync-
 
 ### Request a PR review
 
-You can tell [repo-file-sync-action](https://github.com/BetaHuhn/repo-file-sync-action) to request a review of the PR from users with `REVIEWERS` and from teams with `TEAM_REVIEWERS`:
+You can tell [repo-file-sync-action](https://github.com/vaivars/repo-sync-action) to request a review of the PR from users with `REVIEWERS` and from teams with `TEAM_REVIEWERS`:
 
 **.github/workflows/sync.yml**
 
 ```yml
 - name: Run GitHub File Sync
-  uses: BetaHuhn/repo-file-sync-action@v1
+  uses: vaivars/repo-sync-action@v1
   with:
     GH_PAT: ${{ secrets.GH_PAT }}
     REVIEWERS: |
@@ -425,12 +471,12 @@ group:
 
 By default all new branches created in the target repo will be in the this format: `repo-sync/SOURCE_REPO_NAME/SOURCE_BRANCH_NAME`, with the SOURCE_REPO_NAME being replaced with the name of the source repo and SOURCE_BRANCH_NAME with the name of the source branch.
 
-If your repo name contains invalid characters, like a dot ([#32](https://github.com/BetaHuhn/repo-file-sync-action/issues/32)), you can specify a different prefix for the branch (the text before `/SOURCE_BRANCH_NAME`):
+If your repo name contains invalid characters, like a dot ([#32](https://github.com/vaivars/repo-sync-action/issues/32)), you can specify a different prefix for the branch (the text before `/SOURCE_BRANCH_NAME`):
 
 **.github/workflows/sync.yml**
 
 ```yml
-uses: BetaHuhn/repo-file-sync-action@v1
+uses: vaivars/repo-sync-action@v1
 with:
     GH_PAT: ${{ secrets.GH_PAT }}
     BRANCH_PREFIX: custom-branch
@@ -448,7 +494,7 @@ You can specify a custom commit body. This will be appended to the commit messag
 
 ```yml
 - name: Run GitHub File Sync
-  uses: BetaHuhn/repo-file-sync-action@v1
+  uses: vaivars/repo-sync-action@v1
   with:
     GH_PAT: ${{ secrets.GH_PAT }}
     COMMIT_BODY: "Change-type: patch"
@@ -469,7 +515,7 @@ You can add more content to the PR body with the `PR_BODY` option. For example:
 
 ```yml
 - name: Run GitHub File Sync
-  uses: BetaHuhn/repo-file-sync-action@v1
+  uses: vaivars/repo-sync-action@v1
   with:
     GH_PAT: ${{ secrets.GH_PAT }}
     PR_BODY: This is your custom PR Body
@@ -498,7 +544,7 @@ A fork of each target repository will be created on this account, and all change
 Note: while you can open pull requests to target repositories without write access, some features, like applying labels, are not possible.
 
 ```yml
-uses: BetaHuhn/repo-file-sync-action@v1
+uses: vaivars/repo-sync-action@v1
 with:
     GH_PAT: ${{ secrets.GH_PAT }}
     FORK: file-sync-bot
@@ -506,44 +552,49 @@ with:
 
 ### Advanced sync config
 
-Here's how I keep common files in sync across my repositories. The main repository [`github-files`](https://github.com/BetaHuhn/github-files) contains all the files I want to sync and the [repo-file-sync-action](https://github.com/BetaHuhn/repo-file-sync-action) Action which runs on every push.
+Here's an example showing how to use `repo_groups` to eliminate duplication when syncing common files across multiple repositories.
 
-Using groups I can specify which file(s) should be synced to which repositories:
+Without `repo_groups`, you'd have to repeat repository names in multiple groups. With `repo_groups`, you can define repository sets once and reference them:
 
 **.github/sync.yml**
 
 ```yml
+repo_groups:
+  # Define reusable repository groups
+  all_repos:
+    - user/do-spaces-action
+    - user/running-at
+    - user/spaces-cli
+    - user/metadata-scraper
+    - user/ejs-serve
+    - user/feedback-js
+    - user/drkmd.js
+  
+  node_repos:
+    - user/do-spaces-action
+    - user/running-at
+    - user/spaces-cli
+    - user/metadata-scraper
+    - user/ejs-serve
+    - user/feedback-js
+    - user/drkmd.js
+  
+  has_releases:
+    - user/do-spaces-action
+    - user/metadata-scraper
+    - user/feedback-js
+    - user/drkmd.js
+
 group:
-  # dependabot files
+  # Dependabot files - all repos
   - files:
       - source: configs/dependabot.yml
         dest: .github/dependabot.yml
       - source: workflows/dependencies/dependabot.yml
         dest: .github/workflows/dependabot.yml
-    repos: |
-      BetaHuhn/do-spaces-action
-      BetaHuhn/running-at
-      BetaHuhn/spaces-cli
-      BetaHuhn/metadata-scraper
-      BetaHuhn/ejs-serve
-      BetaHuhn/feedback-js
-      BetaHuhn/drkmd.js
+    repos: all_repos
 
-  # GitHub Sponsors config
-  - files:
-      - source: configs/FUNDING.yml
-        dest: .github/FUNDING.yml
-    repos: |
-      BetaHuhn/do-spaces-action
-      BetaHuhn/running-at
-      BetaHuhn/spaces-cli
-      BetaHuhn/qrgen
-      BetaHuhn/metadata-scraper
-      BetaHuhn/ejs-serve
-      BetaHuhn/feedback-js
-      BetaHuhn/drkmd.js
-
-  # Semantic release
+  # Semantic release - only repos with releases
   - files:
       - source: workflows/versioning/release-scheduler.yml
         dest: .github/workflows/release-scheduler.yml
@@ -551,53 +602,31 @@ group:
         dest: .github/workflows/release.yml
       - source: configs/release.config.js
         dest: release.config.js
-    repos: |
-      BetaHuhn/do-spaces-action
-      BetaHuhn/metadata-scraper
-      BetaHuhn/feedback-js
-      BetaHuhn/drkmd.js
+    repos: has_releases
 
-  # Stale issues workflow
+  # Stale issues workflow - all repos
   - files:
       - source: workflows/issues/stale.yml
         dest: .github/workflows/stale.yml
-    repos: |
-      BetaHuhn/do-spaces-action
-      BetaHuhn/running-at
-      BetaHuhn/spaces-cli
-      BetaHuhn/qrgen
-      BetaHuhn/metadata-scraper
-      BetaHuhn/ejs-serve
-      BetaHuhn/feedback-js
-      BetaHuhn/drkmd.js
+    repos: all_repos
 
-  # Lint CI workflow
+  # Lint CI workflow - node repos
   - files:
       - source: workflows/node/lint.yml
         dest: .github/workflows/lint.yml
-    repos: |
-      BetaHuhn/do-spaces-action
-      BetaHuhn/running-at
-      BetaHuhn/spaces-cli
-      BetaHuhn/metadata-scraper
-      BetaHuhn/ejs-serve
-      BetaHuhn/feedback-js
-      BetaHuhn/drkmd.js
+    repos: node_repos
 
-  # MIT License
+  # MIT License - all repos
   - files:
       - source: LICENSE
         dest: LICENSE
-    repos: |
-      BetaHuhn/do-spaces-action
-      BetaHuhn/running-at
-      BetaHuhn/spaces-cli
-      BetaHuhn/qrgen
-      BetaHuhn/metadata-scraper
-      BetaHuhn/ejs-serve
-      BetaHuhn/feedback-js
-      BetaHuhn/drkmd.js
+    repos: all_repos
 ```
+
+This approach makes it much easier to:
+- Add or remove repositories from a group in one place
+- See which repositories are part of each logical grouping
+- Maintain your sync configuration as your repository list grows
 
 ## 💻 Development
 
@@ -607,7 +636,7 @@ The actual source code of this library is in the `src` folder.
 
 - run `yarn lint` or `npm run lint` to run eslint.
 - run `yarn start` or `npm run start` to run the Action locally.
-- run `yarn build` or `npm run build` to produce a production version of [repo-file-sync-action](https://github.com/BetaHuhn/repo-file-sync-action) in the `dist` folder.
+- run `yarn build` or `npm run build` to produce a production version of [repo-file-sync-action](https://github.com/vaivars/repo-sync-action) in the `dist` folder.
 
 ## ❔ About
 

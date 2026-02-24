@@ -1,5 +1,5 @@
 name: 'Repo File Sync Action'
-description: 'GitHub Action to Sync Files like Workflows Between Repositories.'
+description: 'GitHub Action to Sync Files like Workflows Between Repositories. Fork with repo_groups support.'
 author: 'BetaHuhn'
 
 inputs:

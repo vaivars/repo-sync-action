@@ -198,21 +198,71 @@ const parseFiles = (files) => {
 	})
 }
 
+const resolveRepoList = (reposValue, repoGroups) => {
+	// If reposValue is already an array, return it as-is
+	if (Array.isArray(reposValue)) {
+		return reposValue
+	}
+
+	// If it's a string, check if it's a group reference
+	if (typeof reposValue === 'string') {
+		const trimmedValue = reposValue.trim()
+		
+		// Check if this is a group reference (no newlines, matches a group name)
+		if (!trimmedValue.includes('\n') && repoGroups[trimmedValue]) {
+			core.debug(`Resolving repo group reference: ${ trimmedValue }`)
+			const groupRepos = repoGroups[trimmedValue]
+			
+			if (!Array.isArray(groupRepos)) {
+				core.warning(`Repo group "${ trimmedValue }" is not an array, treating as inline list`)
+				return reposValue.split('\n').map((n) => n.trim()).filter((n) => n)
+			}
+			
+			return groupRepos
+		}
+		
+		// Otherwise, treat as newline-separated inline list
+		return reposValue.split('\n').map((n) => n.trim()).filter((n) => n)
+	}
+
+	// Fallback for unexpected types
+	core.warning(`Unexpected repos value type: ${ typeof reposValue }`)
+	return []
+}
+
 export async function parseConfig() {
 	const fileContent = await fs.promises.readFile(context.CONFIG_PATH)
 
 	const configObject = yaml.load(fileContent.toString())
 
+	// Extract and validate repo_groups
+	const repoGroups = configObject.repo_groups || {}
+	
+	// Validate repo_groups structure
+	if (repoGroups && typeof repoGroups === 'object') {
+		Object.keys(repoGroups).forEach((groupName) => {
+			if (!Array.isArray(repoGroups[groupName])) {
+				core.warning(`Repo group "${ groupName }" should be an array of repository strings`)
+			}
+		})
+		core.debug(`Loaded ${ Object.keys(repoGroups).length } repo group(s): ${ Object.keys(repoGroups).join(', ') }`)
+	}
+
 	const result = {}
 
 	Object.keys(configObject).forEach((key) => {
+		// Skip the repo_groups key as it's not a sync target
+		if (key === 'repo_groups') {
+			return
+		}
+		
 		if (key === 'group') {
 			const rawObject = configObject[key]
 
 			const groups = Array.isArray(rawObject) ? rawObject : [ rawObject ]
 
 			groups.forEach((group) => {
-				const repos = typeof group.repos === 'string' ? group.repos.split('\n').map((n) => n.trim()).filter((n) => n) : group.repos
+				const repos = resolveRepoList(group.repos, repoGroups)
 
 				repos.forEach((name) => {
 					const files = parseFiles(group.files)

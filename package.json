@@ -11,7 +11,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/betahuhn/repo-file-sync-action.git"
+    "url": "git+https://github.com/vaivars/repo-sync-action.git"
   },
   "keywords": [
     "sync",
@@ -19,14 +19,18 @@
     "workflow-sync",
     "github-workflow",
     "github-actions",
-    "github-action-workflow-sync"
+    "github-action-workflow-sync",
+    "repo-groups"
   ],
   "author": "Maximilian Schiller <schiller@mxis.ch>",
+  "contributors": [
+    "vaivars"
+  ],
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/betahuhn/repo-file-sync-action/issues"
+    "url": "https://github.com/vaivars/repo-sync-action/issues"
   },
-  "homepage": "https://github.com/marketplace/actions/repo-file-sync-action",
+  "homepage": "https://github.com/vaivars/repo-sync-action",
   "dependencies": {
     "@actions/core": "^1.10.0",
     "@actions/github": "^5.1.1",
