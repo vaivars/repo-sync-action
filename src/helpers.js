@@ -134,7 +134,7 @@ export async function copy(src, dest, isDirectory, file) {
 		await fs.copy(
 			src,
 			dest,
-			file.exclude !== undefined && { filter: filterFunc },
+			file.exclude !== undefined ? { filter: filterFunc } : undefined,
 		)
 	}
 

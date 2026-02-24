@@ -51529,7 +51529,7 @@ async function copy(src, dest, isDirectory, file) {
 		await fs_extra_lib.copy(
 			src,
 			dest,
-			file.exclude !== undefined && { filter: filterFunc },
+			file.exclude !== undefined ? { filter: filterFunc } : undefined,
 		)
 	}
 
