@@ -439,13 +439,17 @@ export default class Git {
 		}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID || 0})
 		`)
 
+		const prTitle = title === undefined
+			? `${COMMIT_PREFIX} synced file(s) with ${GITHUB_REPOSITORY}`
+			: title
+
 		if (this.existingPr) {
 			core.info(`Overwriting existing PR`)
 
 			const { data } = await this.github.pulls.update({
 				owner: this.repo.user,
 				repo: this.repo.name,
-				title: `${COMMIT_PREFIX} synced file(s) with ${GITHUB_REPOSITORY}`,
+				title: prTitle,
 				pull_number: this.existingPr.number,
 				body: body,
 			})
@@ -458,9 +462,7 @@ export default class Git {
 		const { data } = await this.github.pulls.create({
 			owner: this.repo.user,
 			repo: this.repo.name,
-			title: title === undefined
-				? `${COMMIT_PREFIX} synced file(s) with ${GITHUB_REPOSITORY}`
-				: title,
+			title: prTitle,
 			body: body,
 			head: `${FORK ? FORK : this.repo.user}:${this.prBranch}`,
 			base: this.baseBranch,

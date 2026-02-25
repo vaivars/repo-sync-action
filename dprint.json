@@ -8,7 +8,8 @@
     "node_modules",
     "dist",
     "package-lock.json",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "tests/test-files"
   ],
   "plugins": [
     "https://plugins.dprint.dev/typescript-0.93.0.wasm",

@@ -883,7 +883,7 @@ class DecodedURL extends URL {
     };
     return makeCallback(0);
   };
-
+  
   var _isArray = Array.isArray || function(maybeArray){
     return Object.prototype.toString.call(maybeArray) === '[object Array]';
   };
@@ -39456,7 +39456,7 @@ module.exports = (str, filter = {}) => {
         filter = str || {};
         str = run();
     }
-
+    
     const {
         added,
         modified,
@@ -39465,9 +39465,9 @@ module.exports = (str, filter = {}) => {
         renamed,
         unstaged,
     } = filter;
-
+    
     const files = parse(str);
-
+    
     const picked = pick(files, {
         added,
         modified,
@@ -39476,9 +39476,9 @@ module.exports = (str, filter = {}) => {
         renamed,
         unstaged,
     });
-
+    
     const names = getNames(picked);
-
+    
     return names;
 };
 
@@ -39498,20 +39498,20 @@ function run() {
 module.exports.parse = parse;
 function parse(str) {
     const result = [];
-
+    
     const lines = str
         .split('\n')
         .filter(Boolean);
-
+    
     for (const line of lines) {
         const {name, mode} = parseLine(line);
-
+        
         result.push({
             name,
             mode,
         });
     }
-
+    
     return result;
 }
 
@@ -39523,28 +39523,28 @@ const ARROW = '-> ';
 const cutRenameTo = (line) => {
     const i = line.indexOf(ARROW);
     const count = i + ARROW.length;
-
+    
     return line.slice(count);
 };
 
 function parseLine(line) {
     const [first] = line;
-
+    
     if (first === UNTRACKED)
         return {
             name: line.replace('?? ', ''),
             mode: UNTRACKED,
         };
-
+    
     if (first === RENAMED)
         return {
             name: cutRenameTo(line),
             mode: RENAMED,
         };
-
+    
     const [mode] = line.match(/^[\sA-Z]+\s/, '');
     const name = line.replace(mode, '');
-
+    
     return {
         name,
         mode,
@@ -39560,25 +39560,25 @@ const isUnstaged = ({mode}) => mode === ' M ';
 
 const check = ({added, modified, untracked, unstaged, deleted, renamed}) => (file) => {
     let is = false;
-
+    
     if (added)
         is = is || isAdded(file);
-
+    
     if (modified)
         is = is || isModified(file);
-
+    
     if (untracked)
         is = is || isUntracked(file);
-
+    
     if (unstaged)
         is = is || isUnstaged(file);
-
+    
     if (deleted)
         is = is || isDeleted(file);
-
+    
     if (renamed)
         is = is || isRenamed(file);
-
+    
     return is;
 };
 
@@ -39778,7 +39778,7 @@ __webpack_unused_export__ = defaultContentType
 /************************************************************************/
 /******/ // The module cache
 /******/ var __webpack_module_cache__ = {};
-/******/
+/******/ 
 /******/ // The require function
 /******/ function __nccwpck_require__(moduleId) {
 /******/ 	// Check if module is in cache
@@ -39792,7 +39792,7 @@ __webpack_unused_export__ = defaultContentType
 /******/ 		// no module.loaded needed
 /******/ 		exports: {}
 /******/ 	};
-/******/
+/******/ 
 /******/ 	// Execute the module function
 /******/ 	var threw = true;
 /******/ 	try {
@@ -39801,11 +39801,11 @@ __webpack_unused_export__ = defaultContentType
 /******/ 	} finally {
 /******/ 		if(threw) delete __webpack_module_cache__[moduleId];
 /******/ 	}
-/******/
+/******/ 
 /******/ 	// Return the exports of the module
 /******/ 	return module.exports;
 /******/ }
-/******/
+/******/ 
 /************************************************************************/
 /******/ /* webpack/runtime/define property getters */
 /******/ (() => {
@@ -39818,16 +39818,16 @@ __webpack_unused_export__ = defaultContentType
 /******/ 		}
 /******/ 	};
 /******/ })();
-/******/
+/******/ 
 /******/ /* webpack/runtime/hasOwnProperty shorthand */
 /******/ (() => {
 /******/ 	__nccwpck_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
 /******/ })();
-/******/
+/******/ 
 /******/ /* webpack/runtime/compat */
-/******/
+/******/ 
 /******/ if (typeof __nccwpck_require__ !== 'undefined') __nccwpck_require__.ab = new URL('.', import.meta.url).pathname.slice(import.meta.url.match(/^file:\/\/\/\w:/) ? 1 : 0, -1) + "/";
-/******/
+/******/ 
 /************************************************************************/
 var __webpack_exports__ = {};
 
@@ -39836,8 +39836,6 @@ __nccwpck_require__.d(__webpack_exports__, {
   e: () => (/* binding */ run)
 });
 
-;// CONCATENATED MODULE: external "url"
-const external_url_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("url");
 ;// CONCATENATED MODULE: external "os"
 const external_os_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("os");
 ;// CONCATENATED MODULE: ./node_modules/@actions/core/lib/utils.js
@@ -40923,8 +40921,8 @@ class oidc_utils_OidcClient {
             const res = yield httpclient
                 .getJson(id_token_url)
                 .catch(error => {
-                throw new Error(`Failed to get ID Token. \n
-        Error Code : ${error.statusCode}\n
+                throw new Error(`Failed to get ID Token. \n 
+        Error Code : ${error.statusCode}\n 
         Error Message: ${error.message}`);
             });
             const id_token = (_a = res.result) === null || _a === void 0 ? void 0 : _a.value;
@@ -42783,6 +42781,8 @@ function getIDToken(aud) {
  */
 
 //# sourceMappingURL=core.js.map
+;// CONCATENATED MODULE: external "url"
+const external_url_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("url");
 ;// CONCATENATED MODULE: ./node_modules/@actions/github/lib/context.js
 
 
@@ -52068,13 +52068,17 @@ class Git {
 		}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID || 0})
 		`)
 
+		const prTitle = title === undefined
+			? `${COMMIT_PREFIX} synced file(s) with ${GITHUB_REPOSITORY}`
+			: title
+
 		if (this.existingPr) {
 			info(`Overwriting existing PR`)
 
 			const { data } = await this.github.pulls.update({
 				owner: this.repo.user,
 				repo: this.repo.name,
-				title: `${COMMIT_PREFIX} synced file(s) with ${GITHUB_REPOSITORY}`,
+				title: prTitle,
 				pull_number: this.existingPr.number,
 				body: body,
 			})
@@ -52087,9 +52091,7 @@ class Git {
 		const { data } = await this.github.pulls.create({
 			owner: this.repo.user,
 			repo: this.repo.name,
-			title: title === undefined
-				? `${COMMIT_PREFIX} synced file(s) with ${GITHUB_REPOSITORY}`
-				: title,
+			title: prTitle,
 			body: body,
 			head: `${FORK ? FORK : this.repo.user}:${this.prBranch}`,
 			base: this.baseBranch,
@@ -52229,6 +52231,9 @@ async function run() {
 
 	const prUrls = []
 
+	const useOriginalMessage = ORIGINAL_MESSAGE && git.isOneCommitPush()
+	const originalMessage = useOriginalMessage ? git.originalCommitMessage() : undefined
+
 	await forEach(repos, async (item) => {
 		info(`Repository Info`)
 		info(`Slug		: ${item.repo.name}`)
@@ -52302,24 +52307,18 @@ async function run() {
 					const otherFiles = isDirectory
 						? 'and copied all sub files/folders'
 						: ''
-					const useOriginalCommitMessage = ORIGINAL_MESSAGE
-						&& git.isOneCommitPush()
-						&& arrayEquals(
-							await git.getChangesFromLastCommit(file.source),
-							await git.changes(file.dest),
-						)
 
 					const message = {
 						true: {
-							commit: useOriginalCommitMessage
-								? git.originalCommitMessage()
+							commit: useOriginalMessage
+								? originalMessage
 								: `${src_COMMIT_PREFIX} synced local '${file.dest}' with remote '${file.source}'`,
 							pr:
 								`synced local ${directory} <code>${file.dest}</code> with remote ${directory} <code>${file.source}</code>`,
 						},
 						false: {
-							commit: useOriginalCommitMessage
-								? git.originalCommitMessage()
+							commit: useOriginalMessage
+								? originalMessage
 								: `${src_COMMIT_PREFIX} created local '${file.dest}' from remote '${file.source}'`,
 							pr:
 								`created local ${directory} <code>${file.dest}</code> ${otherFiles} from remote ${directory} <code>${file.source}</code>`,
@@ -52332,7 +52331,6 @@ async function run() {
 						dest: file.dest,
 						source: file.source,
 						message: message[destExists].pr,
-						useOriginalMessage: useOriginalCommitMessage,
 						commitMessage: message[destExists].commit,
 					})
 				}
@@ -52362,24 +52360,10 @@ async function run() {
 			if (hasChanges === true) {
 				core_debug(`Creating commit for remaining files`)
 
-				let useOriginalCommitMessage = ORIGINAL_MESSAGE && git.isOneCommitPush()
-				if (useOriginalCommitMessage) {
-					await forEach(item.files, async (file) => {
-						useOriginalCommitMessage = useOriginalCommitMessage
-							&& arrayEquals(
-								await git.getChangesFromLastCommit(file.source),
-								await git.changes(file.dest),
-							)
-					})
-				}
-
-				const commitMessage = useOriginalCommitMessage
-					? git.originalCommitMessage()
-					: undefined
+				const commitMessage = useOriginalMessage ? originalMessage : undefined
 				await git.commit(commitMessage)
 				modified.push({
 					dest: git.workingDir,
-					useOriginalMessage: useOriginalCommitMessage,
 					commitMessage: commitMessage,
 				})
 			}
@@ -52398,14 +52382,15 @@ async function run() {
 					</details>
 				`)
 
-				const useCommitAsPRTitle = COMMIT_AS_PR_TITLE
-					&& modified.length === 1
-					&& modified[0].useOriginalMessage
+				// Use original commit message as PR title if enabled and applicable
+				const useCommitAsPRTitle = COMMIT_AS_PR_TITLE && useOriginalMessage
+				const prTitle = useCommitAsPRTitle
+					? originalMessage.split('\n', 1)[0].trim()
+					: undefined
+
 				const pullRequest = await git.createOrUpdatePr(
 					COMMIT_EACH_FILE ? changedFiles : '',
-					useCommitAsPRTitle
-						? modified[0].commitMessage.split('\n', 1)[0].trim()
-						: undefined,
+					prTitle,
 				)
 
 				notice(
