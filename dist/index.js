@@ -51132,102 +51132,35 @@ try {
 		GITHUB_TOKEN: token,
 		GITHUB_SERVER_URL: process.env.GITHUB_SERVER_URL || 'https://github.com',
 		IS_INSTALLATION_TOKEN: isInstallationToken,
-		GIT_EMAIL: (0,action_input_parser_lib.getInput)({
-			key: 'GIT_EMAIL',
-		}),
-		GIT_USERNAME: (0,action_input_parser_lib.getInput)({
-			key: 'GIT_USERNAME',
-		}),
-		CONFIG_PATH: (0,action_input_parser_lib.getInput)({
-			key: 'CONFIG_PATH',
-			default: '.github/sync.yml',
-		}),
-		IS_FINE_GRAINED: (0,action_input_parser_lib.getInput)({
-			key: 'IS_FINE_GRAINED',
-			default: false,
-		}),
-		COMMIT_BODY: (0,action_input_parser_lib.getInput)({
-			key: 'COMMIT_BODY',
-			default: '',
-		}),
-		COMMIT_PREFIX: (0,action_input_parser_lib.getInput)({
-			key: 'COMMIT_PREFIX',
-			default: '🔄',
-		}),
-		COMMIT_EACH_FILE: (0,action_input_parser_lib.getInput)({
-			key: 'COMMIT_EACH_FILE',
-			type: 'boolean',
-			default: true,
-		}),
-		PR_LABELS: (0,action_input_parser_lib.getInput)({
-			key: 'PR_LABELS',
-			default: ['sync'],
-			type: 'array',
-			disableable: true,
-		}),
-		PR_BODY: (0,action_input_parser_lib.getInput)({
-			key: 'PR_BODY',
-			default: '',
-		}),
-		ASSIGNEES: (0,action_input_parser_lib.getInput)({
-			key: 'ASSIGNEES',
-			type: 'array',
-		}),
-		REVIEWERS: (0,action_input_parser_lib.getInput)({
-			key: 'REVIEWERS',
-			type: 'array',
-		}),
-		TEAM_REVIEWERS: (0,action_input_parser_lib.getInput)({
-			key: 'TEAM_REVIEWERS',
-			type: 'array',
-		}),
-		TMP_DIR: (0,action_input_parser_lib.getInput)({
-			key: 'TMP_DIR',
-			default: `tmp-${Date.now().toString()}`,
-		}),
-		DRY_RUN: (0,action_input_parser_lib.getInput)({
-			key: 'DRY_RUN',
-			type: 'boolean',
-			default: false,
-		}),
-		SKIP_CLEANUP: (0,action_input_parser_lib.getInput)({
-			key: 'SKIP_CLEANUP',
-			type: 'boolean',
-			default: false,
-		}),
-		OVERWRITE_EXISTING_PR: (0,action_input_parser_lib.getInput)({
-			key: 'OVERWRITE_EXISTING_PR',
-			type: 'boolean',
-			default: true,
-		}),
-		GITHUB_REPOSITORY: (0,action_input_parser_lib.getInput)({
-			key: 'GITHUB_REPOSITORY',
-			required: true,
-		}),
-		SKIP_PR: (0,action_input_parser_lib.getInput)({
-			key: 'SKIP_PR',
-			type: 'boolean',
-			default: false,
-		}),
-		ORIGINAL_MESSAGE: (0,action_input_parser_lib.getInput)({
-			key: 'ORIGINAL_MESSAGE',
-			type: 'boolean',
-			default: false,
-		}),
-		COMMIT_AS_PR_TITLE: (0,action_input_parser_lib.getInput)({
-			key: 'COMMIT_AS_PR_TITLE',
-			type: 'boolean',
-			default: false,
-		}),
-		BRANCH_PREFIX: (0,action_input_parser_lib.getInput)({
-			key: 'BRANCH_PREFIX',
-			default: 'repo-sync/SOURCE_REPO_NAME',
-		}),
-		FORK: (0,action_input_parser_lib.getInput)({
-			key: 'FORK',
-			default: false,
-			disableable: true,
-		}),
+	}
+
+	const inputs = {
+		GIT_EMAIL: {},
+		GIT_USERNAME: {},
+		CONFIG_PATH: { default: '.github/sync.yml' },
+		IS_FINE_GRAINED: { default: false },
+		COMMIT_BODY: { default: '' },
+		COMMIT_PREFIX: { default: '🔄' },
+		COMMIT_EACH_FILE: { type: 'boolean', default: true },
+		PR_LABELS: { default: ['sync'], type: 'array', disableable: true },
+		PR_BODY: { default: '' },
+		ASSIGNEES: { type: 'array' },
+		REVIEWERS: { type: 'array' },
+		TEAM_REVIEWERS: { type: 'array' },
+		TMP_DIR: { default: `tmp-${Date.now().toString()}` },
+		DRY_RUN: { type: 'boolean', default: false },
+		SKIP_CLEANUP: { type: 'boolean', default: false },
+		OVERWRITE_EXISTING_PR: { type: 'boolean', default: true },
+		GITHUB_REPOSITORY: { required: true },
+		SKIP_PR: { type: 'boolean', default: false },
+		ORIGINAL_MESSAGE: { type: 'boolean', default: false },
+		COMMIT_AS_PR_TITLE: { type: 'boolean', default: false },
+		BRANCH_PREFIX: { default: 'repo-sync/SOURCE_REPO_NAME' },
+		FORK: { default: false, disableable: true },
+	}
+
+	for (const [key, options] of Object.entries(inputs)) {
+		config_context[key] = (0,action_input_parser_lib.getInput)({ key, ...options })
 	}
 
 	core_setSecret(config_context.GITHUB_TOKEN)
@@ -51425,13 +51358,6 @@ var nunjucks = __nccwpck_require__(8115);
 
 nunjucks.configure({ autoescape: true, trimBlocks: true, lstripBlocks: true })
 
-// From https://github.com/toniov/p-iteration/blob/master/lib/static-methods.js - MIT © Antonio V
-async function forEach(array, callback) {
-	for (let index = 0; index < array.length; index++) {
-		await callback(array[index], index, array)
-	}
-}
-
 // From https://github.com/MartinKolarik/dedent-js/blob/master/src/index.ts - MIT © 2015 Martin Kolárik
 function dedent(templateStrings, ...values) {
 	const matches = []
@@ -51496,11 +51422,9 @@ async function write(src, dest, context) {
 	await fs_extra_lib.outputFile(dest, content)
 }
 
-async function copy(src, dest, isDirectory, file) {
-	const deleteOrphaned = isDirectory && file.deleteOrphaned
+function createFilterFunc(file) {
 	const exclude = file.exclude
-
-	const filterFunc = (file) => {
+	return (file) => {
 		if (exclude !== undefined) {
 			// Check if file-path is one of the present filepaths in the excluded paths
 			// This has presedence over the single file, and therefore returns before the single file check
@@ -51525,6 +51449,11 @@ async function copy(src, dest, isDirectory, file) {
 		}
 		return true
 	}
+}
+
+async function copy(src, dest, isDirectory, file) {
+	const deleteOrphaned = isDirectory && file.deleteOrphaned
+	const filterFunc = createFilterFunc(file)
 
 	if (file.template) {
 		if (isDirectory) {
@@ -51585,6 +51514,22 @@ async function copy(src, dest, isDirectory, file) {
 				}
 			}
 		}
+	}
+}
+
+async function getSyncedFileList(src, dest, isDirectory, file) {
+	const filterFunc = createFilterFunc(file)
+
+	if (isDirectory) {
+		const srcFileList = await readfiles(src, {
+			readContents: false,
+			hidden: true,
+		})
+		return srcFileList
+			.filter((srcFile) => filterFunc(srcFile))
+			.map((srcFile) => external_path_.join(dest, srcFile))
+	} else {
+		return [dest]
 	}
 }
 
@@ -51856,6 +51801,17 @@ class Git {
 			this.workingDir,
 		)
 		return Object.values(this.parseGitDiffOutput(output))
+	}
+
+	async getFileStatuses() {
+		const statusOutput = await execCmd(
+			`git status --porcelain`,
+			this.workingDir,
+		)
+		return (0,porcelain.parse)(statusOutput).reduce((acc, entry) => {
+			acc[entry.name] = entry.status
+			return acc
+		}, {})
 	}
 
 	async hasChanges() {
@@ -52206,6 +52162,7 @@ class Git {
 
 
 
+
 const {
 	COMMIT_EACH_FILE,
 	COMMIT_PREFIX: src_COMMIT_PREFIX,
@@ -52224,216 +52181,17 @@ const {
 } = config
 
 async function run() {
-	// Reuse octokit for each repo
 	const git = new Git()
 
 	const repos = await parseConfig()
 
 	const prUrls = []
 
-	const useOriginalMessage = ORIGINAL_MESSAGE && git.isOneCommitPush()
-	const originalMessage = useOriginalMessage ? git.originalCommitMessage() : undefined
+	for (const repo of repos) {
+		await processRepository(repo, git, prUrls)
+	}
 
-	await forEach(repos, async (item) => {
-		info(`Repository Info`)
-		info(`Slug		: ${item.repo.name}`)
-		info(`Owner		: ${item.repo.user}`)
-		info(`Https Url	: https://${item.repo.fullName}`)
-		info(`Branch		: ${item.repo.branch}`)
-		info('	')
-		try {
-			// Clone and setup the git repository locally
-			await git.initRepo(item.repo)
-
-			let existingPr
-			if (src_SKIP_PR === false) {
-				await git.createPrBranch()
-
-				// Check for existing PR and add warning message that the PR maybe about to change
-				existingPr = src_OVERWRITE_EXISTING_PR
-					? await git.findExistingPr()
-					: undefined
-				if (existingPr && DRY_RUN === false) {
-					info(`Found existing PR ${existingPr.number}`)
-					await git.setPrWarning()
-				}
-			}
-
-			info(`Locally syncing file(s) between source and target repository`)
-			const modified = []
-
-			// Loop through all selected files of the source repo
-			await forEach(item.files, async (file) => {
-				const fileExists = external_fs_.existsSync(file.source)
-				if (fileExists === false) {
-					return warning(`Source ${file.source} not found`)
-				}
-
-				const localDestination = `${git.workingDir}/${file.dest}`
-
-				const destExists = external_fs_.existsSync(localDestination)
-				if (destExists === true && file.replace === false) {
-					return warning(
-						`File(s) already exist(s) in destination and 'replace' option is set to false`,
-					)
-				}
-
-				const isDirectory = await pathIsDirectory(file.source)
-				const source = isDirectory
-					? `${addTrailingSlash(file.source)}`
-					: file.source
-				const dest = isDirectory
-					? `${addTrailingSlash(localDestination)}`
-					: localDestination
-
-				if (isDirectory) info(`Source is directory`)
-
-				await copy(source, dest, isDirectory, file)
-
-				await git.add(file.dest)
-
-				// Commit each file separately, if option is set to false commit all files at once later
-				if (COMMIT_EACH_FILE === true) {
-					const hasChanges = await git.hasChanges()
-
-					if (hasChanges === false) {
-						return core_debug('File(s) already up to date')
-					}
-
-					core_debug(`Creating commit for file(s) ${file.dest}`)
-
-					// Use different commit/pr message based on if the source is a directory or file
-					const directory = isDirectory ? 'directory' : ''
-					const otherFiles = isDirectory
-						? 'and copied all sub files/folders'
-						: ''
-
-					const message = {
-						true: {
-							commit: useOriginalMessage
-								? originalMessage
-								: `${src_COMMIT_PREFIX} synced local '${file.dest}' with remote '${file.source}'`,
-							pr:
-								`synced local ${directory} <code>${file.dest}</code> with remote ${directory} <code>${file.source}</code>`,
-						},
-						false: {
-							commit: useOriginalMessage
-								? originalMessage
-								: `${src_COMMIT_PREFIX} created local '${file.dest}' from remote '${file.source}'`,
-							pr:
-								`created local ${directory} <code>${file.dest}</code> ${otherFiles} from remote ${directory} <code>${file.source}</code>`,
-						},
-					}
-
-					// Commit and add file to modified array so we later know if there are any changes to actually push
-					await git.commit(message[destExists].commit)
-					modified.push({
-						dest: file.dest,
-						source: file.source,
-						message: message[destExists].pr,
-						commitMessage: message[destExists].commit,
-					})
-				}
-			})
-
-			if (DRY_RUN) {
-				warning('Dry run, no changes will be pushed')
-
-				core_debug('Git Status:')
-				core_debug(await git.status())
-
-				return
-			}
-
-			const hasChanges = await git.hasChanges()
-
-			// If no changes left and nothing was modified we can assume nothing has changed/needs to be pushed
-			if (hasChanges === false && modified.length < 1) {
-				info('File(s) already up to date')
-
-				if (existingPr) await git.removePrWarning()
-
-				return
-			}
-
-			// If there are still local changes left (i.e. not committed each file separately), commit them before pushing
-			if (hasChanges === true) {
-				core_debug(`Creating commit for remaining files`)
-
-				const commitMessage = useOriginalMessage ? originalMessage : undefined
-				await git.commit(commitMessage)
-				modified.push({
-					dest: git.workingDir,
-					commitMessage: commitMessage,
-				})
-			}
-
-			info(`Pushing changes to target repository`)
-			await git.push()
-
-			if (src_SKIP_PR === false) {
-				// If each file was committed separately, list them in the PR description
-				const changedFiles = dedent(`
-					<details>
-					<summary>Changed files</summary>
-					<ul>
-					${modified.map((file) => `<li>${file.message}</li>`).join('')}
-					</ul>
-					</details>
-				`)
-
-				// Use original commit message as PR title if enabled and applicable
-				const useCommitAsPRTitle = COMMIT_AS_PR_TITLE && useOriginalMessage
-				const prTitle = useCommitAsPRTitle
-					? originalMessage.split('\n', 1)[0].trim()
-					: undefined
-
-				const pullRequest = await git.createOrUpdatePr(
-					COMMIT_EACH_FILE ? changedFiles : '',
-					prTitle,
-				)
-
-				notice(
-					`Pull Request #${pullRequest.number} created/updated: ${pullRequest.html_url}`,
-				)
-				prUrls.push(pullRequest.html_url)
-
-				if (PR_LABELS !== undefined && PR_LABELS.length > 0 && !src_FORK) {
-					info(`Adding label(s) "${PR_LABELS.join(', ')}" to PR`)
-					await git.addPrLabels(PR_LABELS)
-				}
-
-				if (ASSIGNEES !== undefined && ASSIGNEES.length > 0 && !src_FORK) {
-					info(`Adding assignee(s) "${ASSIGNEES.join(', ')}" to PR`)
-					await git.addPrAssignees(ASSIGNEES)
-				}
-
-				if (REVIEWERS !== undefined && REVIEWERS.length > 0 && !src_FORK) {
-					info(`Adding reviewer(s) "${REVIEWERS.join(', ')}" to PR`)
-					await git.addPrReviewers(REVIEWERS)
-				}
-
-				if (
-					TEAM_REVIEWERS !== undefined
-					&& TEAM_REVIEWERS.length > 0
-					&& !src_FORK
-				) {
-					info(
-						`Adding team reviewer(s) "${TEAM_REVIEWERS.join(', ')}" to PR`,
-					)
-					await git.addPrTeamReviewers(TEAM_REVIEWERS)
-				}
-			}
-
-			info('	')
-		} catch (err) {
-			setFailed(err.message)
-			core_debug(err)
-		}
-	})
-
-	// If we created any PRs, set their URLs as the output
-	if (prUrls) {
+	if (prUrls.length > 0) {
 		setOutput('pull_request_urls', prUrls)
 	}
 
@@ -52444,6 +52202,230 @@ async function run() {
 
 	await remove(src_TMP_DIR)
 	info('Cleanup complete')
+}
+
+async function processRepository(item, git, prUrls) {
+	info(`Repository Info`)
+	info(`Slug\t\t: ${item.repo.name}`)
+	info(`Owner\t\t: ${item.repo.user}`)
+	info(`Https Url\t: https://${item.repo.fullName}`)
+	info(`Branch\t\t: ${item.repo.branch}`)
+	info('\t')
+
+	try {
+		// Clone and setup the git repository locally
+		await git.initRepo(item.repo)
+
+		let existingPr
+		if (src_SKIP_PR === false) {
+			await git.createPrBranch()
+
+			// Check for existing PR and add warning message that the PR maybe about to change
+			existingPr = src_OVERWRITE_EXISTING_PR ? await git.findExistingPr() : undefined
+			if (existingPr && DRY_RUN === false) {
+				info(`Found existing PR ${existingPr.number}`)
+				await git.setPrWarning()
+			}
+		}
+
+		info(`Locally syncing file(s) between source and target repository`)
+		const modified = []
+
+		// Loop through all selected files of the source repo
+		for (const file of item.files) {
+			await syncFile(file, git, modified)
+		}
+
+		if (DRY_RUN) {
+			warning('Dry run, no changes will be pushed')
+
+			core_debug('Git Status:')
+			core_debug(await git.status())
+
+			return
+		}
+
+		const hasChanges = await git.hasChanges()
+		const useOriginalMessage = ORIGINAL_MESSAGE && git.isOneCommitPush()
+		const originalMessage = useOriginalMessage ? git.originalCommitMessage() : undefined
+
+		if (hasChanges === false && modified.length < 1) {
+			info('File(s) already up to date')
+
+			if (existingPr) await git.removePrWarning()
+
+			return
+		}
+
+		if (hasChanges === true) {
+			core_debug(`Creating commit for remaining files`)
+
+			const commitMessage = useOriginalMessage ? originalMessage : undefined
+			await git.commit(commitMessage)
+			modified.push({
+				dest: git.workingDir,
+				commitMessage: commitMessage,
+			})
+		}
+
+		info(`Pushing changes to target repository`)
+		await git.push()
+
+		if (src_SKIP_PR === false) {
+			const changedFiles = dedent(`
+				<details>
+				<summary>Changed files</summary>
+				<ul>
+				${modified.map((file) => `<li>${file.message}</li>`).join('')}
+				</ul>
+				</details>
+			`)
+
+			const useCommitAsPRTitle = COMMIT_AS_PR_TITLE && useOriginalMessage
+			const prTitle = useCommitAsPRTitle
+				? originalMessage.split('\n', 1)[0].trim()
+				: undefined
+
+			const pullRequest = await git.createOrUpdatePr(
+				COMMIT_EACH_FILE ? changedFiles : '',
+				prTitle,
+			)
+
+			notice(
+				`Pull Request #${pullRequest.number} created/updated: ${pullRequest.html_url}`,
+			)
+			prUrls.push(pullRequest.html_url)
+
+			if (PR_LABELS !== undefined && PR_LABELS.length > 0 && !src_FORK) {
+				info(`Adding label(s) "${PR_LABELS.join(', ')}" to PR`)
+				await git.addPrLabels(PR_LABELS)
+			}
+
+			if (ASSIGNEES !== undefined && ASSIGNEES.length > 0 && !src_FORK) {
+				info(`Adding assignee(s) "${ASSIGNEES.join(', ')}" to PR`)
+				await git.addPrAssignees(ASSIGNEES)
+			}
+
+			if (REVIEWERS !== undefined && REVIEWERS.length > 0 && !src_FORK) {
+				info(`Adding reviewer(s) "${REVIEWERS.join(', ')}" to PR`)
+				await git.addPrReviewers(REVIEWERS)
+			}
+
+			if (
+				TEAM_REVIEWERS !== undefined
+				&& TEAM_REVIEWERS.length > 0
+				&& !src_FORK
+			) {
+				info(
+					`Adding team reviewer(s) "${TEAM_REVIEWERS.join(', ')}" to PR`,
+				)
+				await git.addPrTeamReviewers(TEAM_REVIEWERS)
+			}
+		}
+
+		info('\t')
+	} catch (err) {
+		setFailed(err.message)
+		core_debug(err)
+	}
+}
+
+async function syncFile(file, git, modified) {
+	const fileExists = external_fs_.existsSync(file.source)
+	if (fileExists === false) {
+		return warning(`Source ${file.source} not found`)
+	}
+
+	const localDestination = `${git.workingDir}/${file.dest}`
+
+	const destExists = external_fs_.existsSync(localDestination)
+	if (destExists === true && file.replace === false) {
+		return warning(
+			`File(s) already exist(s) in destination and 'replace' option is set to false`,
+		)
+	}
+
+	const isDirectory = await pathIsDirectory(file.source)
+	const source = isDirectory
+		? `${addTrailingSlash(file.source)}`
+		: file.source
+	const dest = isDirectory
+		? `${addTrailingSlash(localDestination)}`
+		: localDestination
+
+	if (isDirectory) info(`Source is directory`)
+
+	await copy(source, dest, isDirectory, file)
+
+	await git.add(file.dest)
+
+	// Commit each file separately, if option is set to false commit all files at once later
+	if (COMMIT_EACH_FILE === true) {
+		const hasChanges = await git.hasChanges()
+
+		if (hasChanges === false) {
+			return core_debug('File(s) already up to date')
+		}
+
+		core_debug(`Creating commit for file(s) ${file.dest}`)
+
+		// Use different commit/pr message based on if the source is a directory or file
+		const directory = isDirectory ? 'directory' : 'file'
+
+		const syncedFiles = await getSyncedFileList(
+			file.source,
+			file.dest,
+			isDirectory,
+			file,
+		)
+		const fileStatuses = await git.getFileStatuses()
+
+		const details = syncedFiles
+			.map((filePath) => {
+				const status = fileStatuses[filePath] || 'unchanged'
+				let statusText = status
+				if (status.includes('A')) statusText = 'created'
+				if (status.includes('M')) statusText = 'updated'
+
+				const relPath = isDirectory
+					? external_path_.relative(file.dest, filePath)
+					: external_path_.basename(filePath)
+				return `./${relPath} - ${statusText}`
+			})
+			.join('\n')
+
+		const prMessage = dedent(`
+			From remote ${directory} <code>${file.source}</code>, synced the following files:
+
+			${details}
+		`)
+
+		const useOriginalMessage = ORIGINAL_MESSAGE && git.isOneCommitPush()
+		const originalMessage = useOriginalMessage ? git.originalCommitMessage() : undefined
+
+		const message = {
+			true: {
+				commit: useOriginalMessage
+					? originalMessage
+					: `${src_COMMIT_PREFIX} synced local '${file.dest}' with remote '${file.source}'`,
+				pr: prMessage,
+			},
+			false: {
+				commit: useOriginalMessage
+					? originalMessage
+					: `${src_COMMIT_PREFIX} created local '${file.dest}' from remote '${file.source}'`,
+				pr: prMessage,
+			},
+		}
+
+		await git.commit(message[destExists].commit)
+		modified.push({
+			dest: file.dest,
+			source: file.source,
+			message: message[destExists].pr,
+			commitMessage: message[destExists].commit,
+		})
+	}
 }
 
 if (import.meta.url === (0,external_url_namespaceObject.pathToFileURL)(process.argv[1]).href) {

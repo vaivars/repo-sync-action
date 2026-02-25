@@ -6,13 +6,6 @@ import * as path from 'path'
 
 nunjucks.configure({ autoescape: true, trimBlocks: true, lstripBlocks: true })
 
-// From https://github.com/toniov/p-iteration/blob/master/lib/static-methods.js - MIT © Antonio V
-export async function forEach(array, callback) {
-	for (let index = 0; index < array.length; index++) {
-		await callback(array[index], index, array)
-	}
-}
-
 // From https://github.com/MartinKolarik/dedent-js/blob/master/src/index.ts - MIT © 2015 Martin Kolárik
 export function dedent(templateStrings, ...values) {
 	const matches = []
@@ -77,11 +70,9 @@ export async function write(src, dest, context) {
 	await fs.outputFile(dest, content)
 }
 
-export async function copy(src, dest, isDirectory, file) {
-	const deleteOrphaned = isDirectory && file.deleteOrphaned
+export function createFilterFunc(file) {
 	const exclude = file.exclude
-
-	const filterFunc = (file) => {
+	return (file) => {
 		if (exclude !== undefined) {
 			// Check if file-path is one of the present filepaths in the excluded paths
 			// This has presedence over the single file, and therefore returns before the single file check
@@ -106,6 +97,11 @@ export async function copy(src, dest, isDirectory, file) {
 		}
 		return true
 	}
+}
+
+export async function copy(src, dest, isDirectory, file) {
+	const deleteOrphaned = isDirectory && file.deleteOrphaned
+	const filterFunc = createFilterFunc(file)
 
 	if (file.template) {
 		if (isDirectory) {
@@ -166,6 +162,22 @@ export async function copy(src, dest, isDirectory, file) {
 				}
 			}
 		}
+	}
+}
+
+export async function getSyncedFileList(src, dest, isDirectory, file) {
+	const filterFunc = createFilterFunc(file)
+
+	if (isDirectory) {
+		const srcFileList = await readfiles(src, {
+			readContents: false,
+			hidden: true,
+		})
+		return srcFileList
+			.filter((srcFile) => filterFunc(srcFile))
+			.map((srcFile) => path.join(dest, srcFile))
+	} else {
+		return [dest]
 	}
 }
 

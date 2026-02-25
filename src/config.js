@@ -31,102 +31,35 @@ try {
 		GITHUB_TOKEN: token,
 		GITHUB_SERVER_URL: process.env.GITHUB_SERVER_URL || 'https://github.com',
 		IS_INSTALLATION_TOKEN: isInstallationToken,
-		GIT_EMAIL: getInput({
-			key: 'GIT_EMAIL',
-		}),
-		GIT_USERNAME: getInput({
-			key: 'GIT_USERNAME',
-		}),
-		CONFIG_PATH: getInput({
-			key: 'CONFIG_PATH',
-			default: '.github/sync.yml',
-		}),
-		IS_FINE_GRAINED: getInput({
-			key: 'IS_FINE_GRAINED',
-			default: false,
-		}),
-		COMMIT_BODY: getInput({
-			key: 'COMMIT_BODY',
-			default: '',
-		}),
-		COMMIT_PREFIX: getInput({
-			key: 'COMMIT_PREFIX',
-			default: '🔄',
-		}),
-		COMMIT_EACH_FILE: getInput({
-			key: 'COMMIT_EACH_FILE',
-			type: 'boolean',
-			default: true,
-		}),
-		PR_LABELS: getInput({
-			key: 'PR_LABELS',
-			default: ['sync'],
-			type: 'array',
-			disableable: true,
-		}),
-		PR_BODY: getInput({
-			key: 'PR_BODY',
-			default: '',
-		}),
-		ASSIGNEES: getInput({
-			key: 'ASSIGNEES',
-			type: 'array',
-		}),
-		REVIEWERS: getInput({
-			key: 'REVIEWERS',
-			type: 'array',
-		}),
-		TEAM_REVIEWERS: getInput({
-			key: 'TEAM_REVIEWERS',
-			type: 'array',
-		}),
-		TMP_DIR: getInput({
-			key: 'TMP_DIR',
-			default: `tmp-${Date.now().toString()}`,
-		}),
-		DRY_RUN: getInput({
-			key: 'DRY_RUN',
-			type: 'boolean',
-			default: false,
-		}),
-		SKIP_CLEANUP: getInput({
-			key: 'SKIP_CLEANUP',
-			type: 'boolean',
-			default: false,
-		}),
-		OVERWRITE_EXISTING_PR: getInput({
-			key: 'OVERWRITE_EXISTING_PR',
-			type: 'boolean',
-			default: true,
-		}),
-		GITHUB_REPOSITORY: getInput({
-			key: 'GITHUB_REPOSITORY',
-			required: true,
-		}),
-		SKIP_PR: getInput({
-			key: 'SKIP_PR',
-			type: 'boolean',
-			default: false,
-		}),
-		ORIGINAL_MESSAGE: getInput({
-			key: 'ORIGINAL_MESSAGE',
-			type: 'boolean',
-			default: false,
-		}),
-		COMMIT_AS_PR_TITLE: getInput({
-			key: 'COMMIT_AS_PR_TITLE',
-			type: 'boolean',
-			default: false,
-		}),
-		BRANCH_PREFIX: getInput({
-			key: 'BRANCH_PREFIX',
-			default: 'repo-sync/SOURCE_REPO_NAME',
-		}),
-		FORK: getInput({
-			key: 'FORK',
-			default: false,
-			disableable: true,
-		}),
+	}
+
+	const inputs = {
+		GIT_EMAIL: {},
+		GIT_USERNAME: {},
+		CONFIG_PATH: { default: '.github/sync.yml' },
+		IS_FINE_GRAINED: { default: false },
+		COMMIT_BODY: { default: '' },
+		COMMIT_PREFIX: { default: '🔄' },
+		COMMIT_EACH_FILE: { type: 'boolean', default: true },
+		PR_LABELS: { default: ['sync'], type: 'array', disableable: true },
+		PR_BODY: { default: '' },
+		ASSIGNEES: { type: 'array' },
+		REVIEWERS: { type: 'array' },
+		TEAM_REVIEWERS: { type: 'array' },
+		TMP_DIR: { default: `tmp-${Date.now().toString()}` },
+		DRY_RUN: { type: 'boolean', default: false },
+		SKIP_CLEANUP: { type: 'boolean', default: false },
+		OVERWRITE_EXISTING_PR: { type: 'boolean', default: true },
+		GITHUB_REPOSITORY: { required: true },
+		SKIP_PR: { type: 'boolean', default: false },
+		ORIGINAL_MESSAGE: { type: 'boolean', default: false },
+		COMMIT_AS_PR_TITLE: { type: 'boolean', default: false },
+		BRANCH_PREFIX: { default: 'repo-sync/SOURCE_REPO_NAME' },
+		FORK: { default: false, disableable: true },
+	}
+
+	for (const [key, options] of Object.entries(inputs)) {
+		context[key] = getInput({ key, ...options })
 	}
 
 	core.setSecret(context.GITHUB_TOKEN)

@@ -2,6 +2,9 @@
 node = "24"
 dprint = "latest"
 
+[tasks.install]
+run = "npm install --save-dev"
+
 [tasks.lint]
 run = "npm run lint"
 
@@ -23,6 +26,7 @@ run = "node tests/local-sync.test.js"
 hide = true
 description = "CI task for running lint/build/test"
 run = [
+    "mise run install",
     "mise run lint",
     "mise run test",
 ]
