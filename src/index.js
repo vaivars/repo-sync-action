@@ -1,9 +1,18 @@
 import * as core from '@actions/core'
 import * as fs from 'fs'
+import * as path from 'path'
 import { pathToFileURL } from 'url'
 
 import Git from './git.js'
-import { addTrailingSlash, copy, dedent, forEach, pathIsDirectory, remove } from './helpers.js'
+import {
+	addTrailingSlash,
+	copy,
+	dedent,
+	forEach,
+	getSyncedFileList,
+	pathIsDirectory,
+	remove,
+} from './helpers.js'
 
 import { default as config, parseConfig } from './config.js'
 
@@ -104,25 +113,48 @@ export async function run() {
 					core.debug(`Creating commit for file(s) ${file.dest}`)
 
 					// Use different commit/pr message based on if the source is a directory or file
-					const directory = isDirectory ? 'directory' : ''
-					const otherFiles = isDirectory
-						? 'and copied all sub files/folders'
-						: ''
+					const directory = isDirectory ? 'directory' : 'file'
+
+					const syncedFiles = await getSyncedFileList(
+						file.source,
+						file.dest,
+						isDirectory,
+						file,
+					)
+					const fileStatuses = await git.getFileStatuses()
+
+					const details = syncedFiles
+						.map((filePath) => {
+							const status = fileStatuses[filePath] || 'unchanged'
+							let statusText = status
+							if (status.includes('A')) statusText = 'created'
+							if (status.includes('M')) statusText = 'updated'
+
+							const relPath = isDirectory
+								? path.relative(file.dest, filePath)
+								: path.basename(filePath)
+							return `./${relPath} - ${statusText}`
+						})
+						.join('\n')
+
+					const prMessage = dedent(`
+						From remote ${directory} <code>${file.source}</code>, synced the following files:
+
+						${details}
+					`)
 
 					const message = {
 						true: {
 							commit: useOriginalMessage
 								? originalMessage
 								: `${COMMIT_PREFIX} synced local '${file.dest}' with remote '${file.source}'`,
-							pr:
-								`synced local ${directory} <code>${file.dest}</code> with remote ${directory} <code>${file.source}</code>`,
+							pr: prMessage,
 						},
 						false: {
 							commit: useOriginalMessage
 								? originalMessage
 								: `${COMMIT_PREFIX} created local '${file.dest}' from remote '${file.source}'`,
-							pr:
-								`created local ${directory} <code>${file.dest}</code> ${otherFiles} from remote ${directory} <code>${file.source}</code>`,
+							pr: prMessage,
 						},
 					}
 

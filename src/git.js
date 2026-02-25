@@ -229,6 +229,17 @@ export default class Git {
 		return Object.values(this.parseGitDiffOutput(output))
 	}
 
+	async getFileStatuses() {
+		const statusOutput = await execCmd(
+			`git status --porcelain`,
+			this.workingDir,
+		)
+		return parse(statusOutput).reduce((acc, entry) => {
+			acc[entry.name] = entry.status
+			return acc
+		}, {})
+	}
+
 	async hasChanges() {
 		const statusOutput = await execCmd(
 			`git status --porcelain`,

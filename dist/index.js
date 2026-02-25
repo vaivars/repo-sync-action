@@ -51496,11 +51496,9 @@ async function write(src, dest, context) {
 	await fs_extra_lib.outputFile(dest, content)
 }
 
-async function copy(src, dest, isDirectory, file) {
-	const deleteOrphaned = isDirectory && file.deleteOrphaned
+function createFilterFunc(file) {
 	const exclude = file.exclude
-
-	const filterFunc = (file) => {
+	return (file) => {
 		if (exclude !== undefined) {
 			// Check if file-path is one of the present filepaths in the excluded paths
 			// This has presedence over the single file, and therefore returns before the single file check
@@ -51525,6 +51523,11 @@ async function copy(src, dest, isDirectory, file) {
 		}
 		return true
 	}
+}
+
+async function copy(src, dest, isDirectory, file) {
+	const deleteOrphaned = isDirectory && file.deleteOrphaned
+	const filterFunc = createFilterFunc(file)
 
 	if (file.template) {
 		if (isDirectory) {
@@ -51585,6 +51588,22 @@ async function copy(src, dest, isDirectory, file) {
 				}
 			}
 		}
+	}
+}
+
+async function getSyncedFileList(src, dest, isDirectory, file) {
+	const filterFunc = createFilterFunc(file)
+
+	if (isDirectory) {
+		const srcFileList = await readfiles(src, {
+			readContents: false,
+			hidden: true,
+		})
+		return srcFileList
+			.filter((srcFile) => filterFunc(srcFile))
+			.map((srcFile) => external_path_.join(dest, srcFile))
+	} else {
+		return [dest]
 	}
 }
 
@@ -51856,6 +51875,17 @@ class Git {
 			this.workingDir,
 		)
 		return Object.values(this.parseGitDiffOutput(output))
+	}
+
+	async getFileStatuses() {
+		const statusOutput = await execCmd(
+			`git status --porcelain`,
+			this.workingDir,
+		)
+		return (0,porcelain.parse)(statusOutput).reduce((acc, entry) => {
+			acc[entry.name] = entry.status
+			return acc
+		}, {})
 	}
 
 	async hasChanges() {
@@ -52206,6 +52236,7 @@ class Git {
 
 
 
+
 const {
 	COMMIT_EACH_FILE,
 	COMMIT_PREFIX: src_COMMIT_PREFIX,
@@ -52303,25 +52334,48 @@ async function run() {
 					core_debug(`Creating commit for file(s) ${file.dest}`)
 
 					// Use different commit/pr message based on if the source is a directory or file
-					const directory = isDirectory ? 'directory' : ''
-					const otherFiles = isDirectory
-						? 'and copied all sub files/folders'
-						: ''
+					const directory = isDirectory ? 'directory' : 'file'
+
+					const syncedFiles = await getSyncedFileList(
+						file.source,
+						file.dest,
+						isDirectory,
+						file,
+					)
+					const fileStatuses = await git.getFileStatuses()
+
+					const details = syncedFiles
+						.map((filePath) => {
+							const status = fileStatuses[filePath] || 'unchanged'
+							let statusText = status
+							if (status.includes('A')) statusText = 'created'
+							if (status.includes('M')) statusText = 'updated'
+
+							const relPath = isDirectory
+								? external_path_.relative(file.dest, filePath)
+								: external_path_.basename(filePath)
+							return `./${relPath} - ${statusText}`
+						})
+						.join('\n')
+
+					const prMessage = dedent(`
+						From remote ${directory} <code>${file.source}</code>, synced the following files:
+
+						${details}
+					`)
 
 					const message = {
 						true: {
 							commit: useOriginalMessage
 								? originalMessage
 								: `${src_COMMIT_PREFIX} synced local '${file.dest}' with remote '${file.source}'`,
-							pr:
-								`synced local ${directory} <code>${file.dest}</code> with remote ${directory} <code>${file.source}</code>`,
+							pr: prMessage,
 						},
 						false: {
 							commit: useOriginalMessage
 								? originalMessage
 								: `${src_COMMIT_PREFIX} created local '${file.dest}' from remote '${file.source}'`,
-							pr:
-								`created local ${directory} <code>${file.dest}</code> ${otherFiles} from remote ${directory} <code>${file.source}</code>`,
+							pr: prMessage,
 						},
 					}
 
