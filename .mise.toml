@@ -27,6 +27,7 @@ hide = true
 description = "CI task for running lint/build/test"
 run = [
     "mise run install",
+    "mise run format:check",
     "mise run lint",
     "mise run test",
 ]

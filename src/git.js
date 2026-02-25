@@ -235,7 +235,7 @@ export default class Git {
 			this.workingDir,
 		)
 		return parse(statusOutput).reduce((acc, entry) => {
-			acc[entry.name] = entry.status
+			acc[entry.name] = entry.mode
 			return acc
 		}, {})
 	}

@@ -234,15 +234,16 @@ async function syncFile(file, git, modified) {
 
 		const details = syncedFiles
 			.map((filePath) => {
-				const status = fileStatuses[filePath] || 'unchanged'
-				let statusText = status
-				if (status.includes('A')) statusText = 'created'
-				if (status.includes('M')) statusText = 'updated'
+				const mode = fileStatuses[filePath] || ''
+				let statusText = 'unchanged'
+				if (mode.includes('A') || mode.includes('?')) statusText = 'created'
+				if (mode.includes('M')) statusText = 'updated'
+				if (mode.includes('D')) statusText = 'deleted'
 
 				const relPath = isDirectory
 					? path.relative(file.dest, filePath)
 					: path.basename(filePath)
-				return `./${relPath} - ${statusText}`
+				return `\`${relPath}\` - ${statusText}`
 			})
 			.join('\n')
 
