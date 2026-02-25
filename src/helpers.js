@@ -6,13 +6,6 @@ import * as path from 'path'
 
 nunjucks.configure({ autoescape: true, trimBlocks: true, lstripBlocks: true })
 
-// From https://github.com/toniov/p-iteration/blob/master/lib/static-methods.js - MIT © Antonio V
-export async function forEach(array, callback) {
-	for (let index = 0; index < array.length; index++) {
-		await callback(array[index], index, array)
-	}
-}
-
 // From https://github.com/MartinKolarik/dedent-js/blob/master/src/index.ts - MIT © 2015 Martin Kolárik
 export function dedent(templateStrings, ...values) {
 	const matches = []
