@@ -3,15 +3,7 @@ import * as fs from 'fs'
 import { pathToFileURL } from 'url'
 
 import Git from './git.js'
-import {
-	addTrailingSlash,
-	arrayEquals,
-	copy,
-	dedent,
-	forEach,
-	pathIsDirectory,
-	remove,
-} from './helpers.js'
+import { addTrailingSlash, copy, dedent, forEach, pathIsDirectory, remove } from './helpers.js'
 
 import { default as config, parseConfig } from './config.js'
 
@@ -39,6 +31,9 @@ export async function run() {
 	const repos = await parseConfig()
 
 	const prUrls = []
+
+	const useOriginalMessage = ORIGINAL_MESSAGE && git.isOneCommitPush()
+	const originalMessage = useOriginalMessage ? git.originalCommitMessage() : undefined
 
 	await forEach(repos, async (item) => {
 		core.info(`Repository Info`)
@@ -113,24 +108,18 @@ export async function run() {
 					const otherFiles = isDirectory
 						? 'and copied all sub files/folders'
 						: ''
-					const useOriginalCommitMessage = ORIGINAL_MESSAGE
-						&& git.isOneCommitPush()
-						&& arrayEquals(
-							await git.getChangesFromLastCommit(file.source),
-							await git.changes(file.dest),
-						)
 
 					const message = {
 						true: {
-							commit: useOriginalCommitMessage
-								? git.originalCommitMessage()
+							commit: useOriginalMessage
+								? originalMessage
 								: `${COMMIT_PREFIX} synced local '${file.dest}' with remote '${file.source}'`,
 							pr:
 								`synced local ${directory} <code>${file.dest}</code> with remote ${directory} <code>${file.source}</code>`,
 						},
 						false: {
-							commit: useOriginalCommitMessage
-								? git.originalCommitMessage()
+							commit: useOriginalMessage
+								? originalMessage
 								: `${COMMIT_PREFIX} created local '${file.dest}' from remote '${file.source}'`,
 							pr:
 								`created local ${directory} <code>${file.dest}</code> ${otherFiles} from remote ${directory} <code>${file.source}</code>`,
@@ -143,7 +132,6 @@ export async function run() {
 						dest: file.dest,
 						source: file.source,
 						message: message[destExists].pr,
-						useOriginalMessage: useOriginalCommitMessage,
 						commitMessage: message[destExists].commit,
 					})
 				}
@@ -173,24 +161,10 @@ export async function run() {
 			if (hasChanges === true) {
 				core.debug(`Creating commit for remaining files`)
 
-				let useOriginalCommitMessage = ORIGINAL_MESSAGE && git.isOneCommitPush()
-				if (useOriginalCommitMessage) {
-					await forEach(item.files, async (file) => {
-						useOriginalCommitMessage = useOriginalCommitMessage
-							&& arrayEquals(
-								await git.getChangesFromLastCommit(file.source),
-								await git.changes(file.dest),
-							)
-					})
-				}
-
-				const commitMessage = useOriginalCommitMessage
-					? git.originalCommitMessage()
-					: undefined
+				const commitMessage = useOriginalMessage ? originalMessage : undefined
 				await git.commit(commitMessage)
 				modified.push({
 					dest: git.workingDir,
-					useOriginalMessage: useOriginalCommitMessage,
 					commitMessage: commitMessage,
 				})
 			}
@@ -209,14 +183,15 @@ export async function run() {
 					</details>
 				`)
 
-				const useCommitAsPRTitle = COMMIT_AS_PR_TITLE
-					&& modified.length === 1
-					&& modified[0].useOriginalMessage
+				// Use original commit message as PR title if enabled and applicable
+				const useCommitAsPRTitle = COMMIT_AS_PR_TITLE && useOriginalMessage
+				const prTitle = useCommitAsPRTitle
+					? originalMessage.split('\n', 1)[0].trim()
+					: undefined
+
 				const pullRequest = await git.createOrUpdatePr(
 					COMMIT_EACH_FILE ? changedFiles : '',
-					useCommitAsPRTitle
-						? modified[0].commitMessage.split('\n', 1)[0].trim()
-						: undefined,
+					prTitle,
 				)
 
 				core.notice(
