@@ -159,10 +159,19 @@ const resolveRepoList = (reposValue, repoGroups) => {
 		}
 
 		// Otherwise, treat as newline-separated inline list
-		return reposValue
+		// Each entry may be a group reference or a direct repo name
+		const entries = reposValue
 			.split('\n')
 			.map((n) => n.trim())
 			.filter((n) => n)
+
+		return entries.flatMap((entry) => {
+			if (repoGroups[entry] && Array.isArray(repoGroups[entry])) {
+				core.debug(`Resolving repo group reference: ${entry}`)
+				return repoGroups[entry]
+			}
+			return [entry]
+		})
 	}
 
 	// Fallback for unexpected types
