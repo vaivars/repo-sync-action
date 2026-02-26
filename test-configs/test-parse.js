@@ -22,7 +22,15 @@ const resolveRepoList = (reposValue, repoGroups) => {
 			return groupRepos
 		}
 
-		return reposValue.split('\n').map((n) => n.trim()).filter((n) => n)
+		const entries = reposValue.split('\n').map((n) => n.trim()).filter((n) => n)
+
+		return entries.flatMap((entry) => {
+			if (repoGroups[entry] && Array.isArray(repoGroups[entry])) {
+				console.log(`  ✓ Resolved group reference: ${entry}`)
+				return repoGroups[entry]
+			}
+			return [entry]
+		})
 	}
 
 	console.warn(`  ⚠ Unexpected repos value type: ${typeof reposValue}`)
