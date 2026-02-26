@@ -435,9 +435,11 @@ export default class Git {
 		})
 	}
 
-	async createOrUpdatePr(changedFiles, title) {
+	async createOrUpdatePr(changedFiles, title, description) {
 		const body = dedent(`
-			synced local file(s) with [${GITHUB_REPOSITORY}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}).
+			${
+			description ? description + '\n\n' : ''
+		}synced local file(s) with [${GITHUB_REPOSITORY}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}).
 
 			${PR_BODY}
 

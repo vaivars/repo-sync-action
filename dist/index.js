@@ -52009,9 +52009,11 @@ class Git {
 		})
 	}
 
-	async createOrUpdatePr(changedFiles, title) {
+	async createOrUpdatePr(changedFiles, title, description) {
 		const body = dedent(`
-			synced local file(s) with [${GITHUB_REPOSITORY}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}).
+			${
+			description ? description + '\n\n' : ''
+		}synced local file(s) with [${GITHUB_REPOSITORY}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}).
 
 			${PR_BODY}
 
@@ -52247,7 +52249,15 @@ async function processRepository(item, git, prUrls) {
 
 		const hasChanges = await git.hasChanges()
 		const useOriginalMessage = ORIGINAL_MESSAGE && git.isOneCommitPush()
-		const originalMessage = useOriginalMessage ? git.originalCommitMessage() : undefined
+		const originalMessage = useOriginalMessage
+			? git.originalCommitMessage()
+			: undefined
+		const firstLineBreakIndex = originalMessage
+			? originalMessage.indexOf('\n')
+			: -1
+		const prBody = useOriginalMessage && firstLineBreakIndex !== -1
+			? originalMessage.substring(firstLineBreakIndex + 1).trim()
+			: undefined
 
 		if (hasChanges === false && modified.length < 1) {
 			info('File(s) already up to date')
@@ -52289,6 +52299,7 @@ async function processRepository(item, git, prUrls) {
 			const pullRequest = await git.createOrUpdatePr(
 				COMMIT_EACH_FILE ? changedFiles : '',
 				prTitle,
+				prBody,
 			)
 
 			notice(
