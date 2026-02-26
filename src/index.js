@@ -99,7 +99,15 @@ async function processRepository(item, git, prUrls) {
 
 		const hasChanges = await git.hasChanges()
 		const useOriginalMessage = ORIGINAL_MESSAGE && git.isOneCommitPush()
-		const originalMessage = useOriginalMessage ? git.originalCommitMessage() : undefined
+		const originalMessage = useOriginalMessage
+			? git.originalCommitMessage()
+			: undefined
+		const firstLineBreakIndex = originalMessage
+			? originalMessage.indexOf('\n')
+			: -1
+		const prBody = useOriginalMessage && firstLineBreakIndex !== -1
+			? originalMessage.substring(firstLineBreakIndex + 1).trim()
+			: undefined
 
 		if (hasChanges === false && modified.length < 1) {
 			core.info('File(s) already up to date')
@@ -141,6 +149,7 @@ async function processRepository(item, git, prUrls) {
 			const pullRequest = await git.createOrUpdatePr(
 				COMMIT_EACH_FILE ? changedFiles : '',
 				prTitle,
+				prBody,
 			)
 
 			core.notice(

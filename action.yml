@@ -77,7 +77,7 @@ inputs:
     required: false
   ORIGINAL_MESSAGE:
     description: |
-      Re-use the original commit message for commits. Works only if the action is triggered by pushing one commit. Defaults to false
+      Re-use the original commit message for commits and PR body. Works only if the action is triggered by pushing one commit. Defaults to false
     required: false
   COMMIT_AS_PR_TITLE:
     description: |
