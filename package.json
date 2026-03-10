@@ -39,7 +39,7 @@
     "@octokit/plugin-throttling": "^11.0.3",
     "@putout/git-status-porcelain": "^3.0.0",
     "action-input-parser": "^1.2.38",
-    "fs-extra": "^11.3.3",
+    "fs-extra": "^11.3.4",
     "js-yaml": "^4.1.1",
     "nunjucks": "^3.2.4"
   },
