@@ -34,7 +34,7 @@
   },
   "homepage": "https://github.com/vaivars/repo-sync-action",
   "dependencies": {
-    "@actions/core": "^3.0.0",
+    "@actions/core": "^3.0.1",
     "@actions/github": "^9.1.0",
     "@octokit/plugin-throttling": "^11.0.3",
     "@putout/git-status-porcelain": "^3.0.0",
