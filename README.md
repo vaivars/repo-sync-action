@@ -1,655 +1,292 @@
-<div align="center">
+# Repo Sync Action
 
-# Repo File Sync Action
+Keep files and directories in sync across GitHub repositories.
 
-> **Note**: This is a hard fork of [vaivars/repo-sync-action](https://github.com/vaivars/repo-sync-action) with additional features including repository groups support.
+On each run the action copies the files listed in `.github/sync.yml` into every target repository
+and opens a pull request there with the changes (or updates the one it opened before).
 
-[![GitHub](https://img.shields.io/github/license/mashape/apistatus.svg)](https://github.com/vaivars/repo-sync-action/blob/master/LICENSE)
+## Quick start
 
-Keep files like Action workflows or entire directories in sync between multiple repositories.
+1. Create a token (see [Authentication](#authentication)) and store it as a repository secret, for
+   example `GH_PAT`.
 
-</div>
+2. Add a workflow:
 
-## 👋 Introduction
+   **.github/workflows/repo-sync.yml**
 
-With [repo-file-sync-action](https://github.com/vaivars/repo-sync-action) you can sync files, like workflow `.yml` files, configuration files or whole directories between repositories or branches. It works by running a GitHub Action in your main repository everytime you push something to that repo. The action will use a `sync.yml` config file to figure out which files it should sync where. If it finds a file which is out of sync it will open a pull request in the target repository with the changes.
+   ```yml
+   name: Repo Sync
+   on:
+     push:
+       branches: [main]
+     workflow_dispatch:
 
-## 🚀 Features
+   jobs:
+     sync:
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@v7
+         - uses: vaivars/repo-sync-action@v1
+           with:
+             GH_PAT: ${{ secrets.GH_PAT }}
+   ```
 
-- Keep GitHub Actions workflow files in sync across all your repositories
-- Sync any file or a whole directory to as many repositories as you want
-- Easy configuration for any use case
-- Create a pull request in the target repo so you have the last say on what gets merged
-- Automatically label pull requests to integrate with other actions like [automerge-action](https://github.com/pascalgn/automerge-action)
-- Assign users to the pull request
-- Render [Jinja](https://jinja.palletsprojects.com/)-style templates as use variables thanks to [Nunjucks](https://mozilla.github.io/nunjucks/)
+3. List what to sync where:
 
-## 📚 Usage
+   **.github/sync.yml**
 
-### Workflow
+   ```yml
+   owner/repo-a:
+     - .github/workflows/lint.yml
+     - LICENSE
 
-Create a `.yml` file in your `.github/workflows` folder (you can find more info about the structure in the [GitHub Docs](https://docs.github.com/en/free-pro-team@latest/actions/reference/workflow-syntax-for-github-actions)):
+   owner/repo-b:
+     - source: shared/stale.yml
+       dest: .github/workflows/stale.yml
+   ```
 
-**.github/workflows/sync.yml**
+## Authentication
 
-```yml
-name: Sync Files
-on:
-  push:
-    branches:
-      - main
-      - master
-  workflow_dispatch:
-jobs:
-  sync:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@main
-      - name: Run GitHub File Sync
-        uses: vaivars/repo-sync-action@v1
-        with:
-          GH_PAT: ${{ secrets.GH_PAT }}
-```
+`GITHUB_TOKEN` can only access the repository the workflow runs in, so the action needs a token
+with access to every target repository.
 
-#### Token
+| Token                         | Input                                    | Access needed on each target repository                                                                                                      |
+| ----------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Classic personal access token | `GH_PAT`                                 | `repo` scope, plus `workflow` to sync files under `.github/workflows/`                                                                       |
+| Fine-grained access token     | `GH_PAT` with `IS_FINE_GRAINED: true`    | Contents and Pull requests: read and write. Workflows: read and write to sync workflow files                                                 |
+| GitHub App installation token | `GH_INSTALLATION_TOKEN` (`GH_PAT` unset) | Contents: read and write. Metadata: read. Pull requests: read and write (unless `SKIP_PR`). Workflows: read and write to sync workflow files |
 
-In order for the Action to access your repositories you have to specify a [Personal Access token](https://docs.github.com/en/free-pro-team@latest/github/authenticating-to-github/creating-a-personal-access-token) as the value for `GH_PAT` (`GITHUB_TOKEN` will **not** work). The PAT needs the full repo scope ([#31](https://github.com/vaivars/repo-sync-action/discussions/31#discussioncomment-674804)).
+Commits are authored by the `GH_PAT` owner unless you set both `GIT_USERNAME` and `GIT_EMAIL`. With
+an installation token, commits are created through the GitHub API and attributed to the App.
 
-It is recommended to set the token as a
-[Repository Secret](https://docs.github.com/en/free-pro-team@latest/actions/reference/encrypted-secrets#creating-encrypted-secrets-for-a-repository).
+An installation token can be created in an earlier step, for example with
+`actions/create-github-app-token`.
 
-Alternatively, you can provide the token of a GitHub App Installation via the `GH_INSTALLATION_TOKEN` input. You can obtain such token for example via [this](https://github.com/marketplace/actions/github-app-token) action. Tokens from apps have the advantage that they provide more granular access control.
+## Sync configuration
 
-The app needs to be configured for each repo you want to sync to, and have the `Contents` read & write and `Metadata` read-only permission. If you want to use PRs (default setting) you additionally need `Pull requests` read & write access, and to sync workflow files you need `Workflows` read & write access.
+### Targets
 
-If using an installation token you are required to provide the `GIT_EMAIL` and `GIT_USERNAME` input.
-
-### Sync configuration
-
-The last step is to create a `.yml` file in the `.github` folder of your repository and specify what file(s) to sync to which repositories:
-
-**.github/sync.yml**
+Each top-level key is a target repository:
 
 ```yml
-user/repository:
-  - .github/workflows/test.yml
-  - .github/workflows/lint.yml
-
-user/repository2:
-  - source: workflows/stale.yml
-    dest: .github/workflows/stale.yml
-```
-
-More info on how to specify what files to sync where [below](#%EF%B8%8F-sync-configuration).
-
-### Versioning
-
-To always use the latest version of the action add the `latest` tag to the action name like this:
-
-```yml
-uses: vaivars/repo-sync-action@latest
-```
-
-If you want to make sure that your workflow doesn't suddenly break when a new major version is released, use the `v1` tag instead (recommended usage):
-
-```yml
-uses: vaivars/repo-sync-action@v1
-```
-
-With the `v1` tag you will always get the latest non-breaking version which will include potential bug fixes in the future. If you use a specific version, make sure to regularly check if a new version is available, or enable Dependabot.
-
-## ⚙️ Action Inputs
-
-Here are all the inputs [repo-file-sync-action](https://github.com/vaivars/repo-sync-action) takes:
-
-| Key                     | Value                                                                                                                                          | Required                                         | Default                        |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------ |
-| `GH_PAT`                | Your [Personal Access token](https://docs.github.com/en/free-pro-team@latest/github/authenticating-to-github/creating-a-personal-access-token) | **`GH_PAT` or `GH_INSTALLATION_TOKEN` required** | N/A                            |
-| `GH_INSTALLATION_TOKEN` | Token from a GitHub App installation                                                                                                           | **`GH_PAT` or `GH_INSTALLATION_TOKEN` required** | N/A                            |
-| `CONFIG_PATH`           | Path to the sync configuration file                                                                                                            | **No**                                           | .github/sync.yml               |
-| `IS_FINE_GRAINED`       | Labels the GH_PAT as a fine grained token                                                                                                      | **No**                                           | false                          |
-| `PR_LABELS`             | Labels which will be added to the pull request. Set to false to turn off                                                                       | **No**                                           | sync                           |
-| `ASSIGNEES`             | Users to assign to the pull request                                                                                                            | **No**                                           | N/A                            |
-| `REVIEWERS`             | Users to request a review of the pull request from                                                                                             | **No**                                           | N/A                            |
-| `TEAM_REVIEWERS`        | Teams to request a review of the pull request from                                                                                             | **No**                                           | N/A                            |
-| `COMMIT_PREFIX`         | Prefix for commit message and pull request title                                                                                               | **No**                                           | 🔄                             |
-| `COMMIT_BODY`           | Commit message body. Will be appended to commit message, separated by two line returns.                                                        | **No**                                           | ''                             |
-| `PR_BODY`               | Additional content to add in the PR description.                                                                                               | **No**                                           | ''                             |
-| `ORIGINAL_MESSAGE`      | Use original commit message instead. Only works if the file(s) were changed and the action was triggered by pushing a single commit.           | **No**                                           | false                          |
-| `COMMIT_AS_PR_TITLE`    | Use first line of the commit message as PR title. Only works if `ORIGINAL_MESSAGE` is `true` and working.                                      | **No**                                           | false                          |
-| `COMMIT_EACH_FILE`      | Commit each file seperately                                                                                                                    | **No**                                           | true                           |
-| `GIT_EMAIL`             | The e-mail address used to commit the synced files                                                                                             | **Only when using installation token**           | the email of the PAT used      |
-| `GIT_USERNAME`          | The username used to commit the synced files                                                                                                   | **Only when using installation token**           | the username of the PAT used   |
-| `OVERWRITE_EXISTING_PR` | Overwrite any existing Sync PR with the new changes                                                                                            | **No**                                           | true                           |
-| `BRANCH_PREFIX`         | Specify a different prefix for the new branch in the target repo                                                                               | **No**                                           | repo-sync/SOURCE_REPO_NAME     |
-| `TMP_DIR`               | The working directory where all git operations will be done                                                                                    | **No**                                           | tmp-${ Date.now().toString() } |
-| `DRY_RUN`               | Run everything except that nothing will be pushed                                                                                              | **No**                                           | false                          |
-| `SKIP_CLEANUP`          | Skips removing the temporary directory. Useful for debugging                                                                                   | **No**                                           | false                          |
-| `SKIP_PR`               | Skips creating a Pull Request and pushes directly to the default branch                                                                        | **No**                                           | false                          |
-| `FORK`                  | A Github account username. Changes will be pushed to a fork of target repos on this account.                                                   | **No**                                           | false                          |
-
-### Outputs
-
-The action sets the `pull_request_urls` output to the URLs of any created Pull Requests. It will be an array of URLs to each PR, e.g. `'["https://github.com/username/repository/pull/number", "..."]'`.
-
-## 🛠️ Sync Configuration
-
-In order to tell [repo-file-sync-action](https://github.com/vaivars/repo-sync-action) what files to sync where, you have to create a `sync.yml` file in the `.github` directory of your main repository (see [action-inputs](#%EF%B8%8F-action-inputs) on how to change the location).
-
-The top-level key should be used to specify the target repository in the format `username`/`repository-name`@`branch`, after that you can list all the files you want to sync to that individual repository:
-
-```yml
-user/repo:
-  - path/to/file.txt
-user/repo2@develop:
-  - path/to/file2.txt
-```
-
-There are multiple ways to specify which files to sync to each individual repository.
-
-### List individual file(s)
-
-The easiest way to sync files is the list them on a new line for each repository:
-
-```yml
-user/repo:
-  - .github/workflows/build.yml
+owner/repo: # default branch
   - LICENSE
+
+owner/repo@develop: # a specific branch
+  - LICENSE
+
+https://github.example.com/owner/repo: # another host
+  - LICENSE
+```
+
+- The same repository can be listed with different branches, including the repository the workflow
+  runs in. This is how you sync one branch to others.
+- If a repository appears more than once (as a key or in [groups](#groups)), its file lists are
+  combined.
+- Targets on another host only work with `SKIP_PR: true`, because pull requests are always created
+  through the API of the GitHub instance the workflow runs on. On a GitHub Enterprise Server runner,
+  plain `owner/repo` already points at that server.
+
+### Files
+
+An entry is either a path, which is synced to the same path in the target, or an object:
+
+| Key              | Description                                                                                                                          | Default          |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------- |
+| `source`         | File or directory in this repository                                                                                                 | required         |
+| `dest`           | Path in the target repository                                                                                                        | same as `source` |
+| `exclude`        | Directories only. Paths relative to `source` to skip, one per line in a block string (`\|`). End a path with `/` to skip a directory | none             |
+| `deleteOrphaned` | Directories only. Delete files in `dest` that don't exist in `source`                                                                | `false`          |
+| `replace`        | Set to `false` to leave `dest` untouched if it already exists. For a directory, this skips the whole directory                       | `true`           |
+| `template`       | Render the file(s) as a [template](#templates): `true`, or an object of variables                                                    | `false`          |
+
+```yml
+owner/repo:
   - .gitignore
-```
-
-### Different destination path/filename(s)
-
-Using the `dest` option you can specify a destination path in the target repo and/or change the filename for each source file:
-
-```yml
-user/repo:
-  - source: workflows/build.yml
-    dest: .github/workflows/build.yml
-  - source: LICENSE.md
-    dest: LICENSE
-```
-
-### Sync entire directories
-
-You can also specify entire directories to sync:
-
-```yml
-user/repo:
-  - source: workflows/
-    dest: .github/workflows/
-```
-
-### Exclude certain files when syncing directories
-
-Using the `exclude` key you can specify files you want to exclude when syncing entire directories (#26).
-
-```yml
-user/repo:
-  - source: workflows/
+  - source: shared/workflows/
     dest: .github/workflows/
     exclude: |
       node.yml
-      lint.yml
-```
-
-> **Note:** the exclude file path is relative to the source path
-
-### Don't replace existing file(s)
-
-By default if a file already exists in the target repository, it will be replaced. You can change this behaviour by setting the `replace` option to `false`:
-
-```yml
-user/repo:
-  - source: .github/workflows/lint.yml
+      experimental/
+    deleteOrphaned: true
+  - source: shared/CODEOWNERS
+    dest: .github/CODEOWNERS
     replace: false
 ```
 
-### Using templates
+### Templates
 
-You can render templates before syncing by using the [Jinja](https://jinja.palletsprojects.com/)-style template syntax. It will be compiled using [Nunjucks](https://mozilla.github.io/nunjucks/) and the output written to the specific file(s) or folder(s).
-
-Nunjucks supports variables and blocks among other things. To enable, set the `template` field to a context dictionary, or in case of no variables, `true`:
+Templates are rendered with [Nunjucks](https://mozilla.github.io/nunjucks/templating.html), which
+uses Jinja-style syntax:
 
 ```yml
-user/repo:
-  - source: src/README.md
+owner/repo:
+  - source: templates/CODEOWNERS
+    dest: .github/CODEOWNERS
     template:
-      user:
-        name: 'Maxi'
-        handle: '@BetaHuhn'
+      team: '@my-org/platform'
 ```
 
-In the source file you can then use these variables like this:
+**templates/CODEOWNERS**
 
-```yml
-# README.md
-
-Created by {{ user.name }} ({{ user.handle }})
+```text
+* {{ team }}
 ```
 
-Result:
+- Use `template: true` for templates without variables.
+- `{% extends './base.yml' %}` and `{% include %}` paths that start with `./` are resolved relative
+  to the template.
+- GitHub Actions expressions like `${{ secrets.TOKEN }}` use the same braces as Nunjucks. Wrap them
+  in `{% raw %}…{% endraw %}` to keep them in a templated workflow file.
 
-```yml
-# README.md
+### Groups
 
-Created by Maxi (@BetaHuhn)
-```
-
-You can also use `extends` with a relative path to inherit other templates. Take a look at Nunjucks [template syntax](https://mozilla.github.io/nunjucks/templating.html) for more info.
-
-```yml
-user/repo:
-  - source: .github/workflows/child.yml
-    template: true
-```
-
-```yml
-# child.yml
-{% extends './parent.yml' %}
-
-{% block some_block %}
-This is some content
-{% endblock %}
-```
-
-### Delete orphaned files
-
-With the `deleteOrphaned` option you can choose to delete files in the target repository if they are deleted in the source repository. The option defaults to `false` and only works when [syncing entire directories](#sync-entire-directories):
-
-```yml
-user/repo:
-  - source: workflows/
-    dest: .github/workflows/
-    deleteOrphaned: true
-```
-
-It only takes effect on that specific directory.
-
-### Sync the same files to multiple repositories
-
-Instead of repeating yourself listing the same files for multiple repositories, you can create a group:
+`group` syncs the same files to several repositories. It takes a single group or a list of them:
 
 ```yml
 group:
-  repos: |
-    user/repo
-    user/repo1
-  files: 
-    - source: workflows/build.yml
-      dest: .github/workflows/build.yml
-    - source: LICENSE.md
-      dest: LICENSE
+  - repos: |
+      owner/repo-a
+      owner/repo-b@develop
+    files:
+      - source: shared/workflows/
+        dest: .github/workflows/
+
+  - repos: |
+      owner/repo-c
+    files:
+      - LICENSE
 ```
 
-You can create multiple groups like this:
+### Repository groups
 
-```yml
-group:
-  # first group
-  - files:
-      - source: workflows/build.yml
-        dest: .github/workflows/build.yml
-      - source: LICENSE.md
-        dest: LICENSE
-    repos: |
-      user/repo1
-      user/repo2
-
-  # second group
-  - files: 
-      - source: configs/dependabot.yml
-        dest: .github/dependabot.yml
-    repos: |
-      user/repo3
-      user/repo4
-```
-
-### Repository Groups
-
-To avoid repeating the same repository lists across multiple groups, you can define reusable repository groups with the `repo_groups` key:
+`repo_groups` names a list of repositories once, so groups can refer to it by name:
 
 ```yml
 repo_groups:
-  backend_services:
-    - user/api-service
-    - user/worker-service
-    - user/admin-service
-  frontend_apps:
-    - user/web-app
-    - user/mobile-app
+  backend:
+    - owner/api
+    - owner/worker
+  frontend:
+    - owner/web
 
 group:
-  - files:
-      - source: .github/workflows/test.yml
-        dest: .github/workflows/test.yml
-    repos: backend_services
-  
-  - files:
-      - source: .github/workflows/deploy.yml
-        dest: .github/workflows/deploy.yml
-    repos: frontend_apps
+  - repos: backend
+    files:
+      - .github/workflows/test.yml
+
+  - repos: |
+      backend
+      frontend
+      owner/docs
+    files:
+      - LICENSE
 ```
 
-You can still use inline repository lists alongside groups:
+`repos` accepts a repository group name, or a block string (`|`) with one repository or group name
+per line. A YAML list in `repos` is used as-is, and its entries are not expanded as group names.
+
+## Pull requests and commits
+
+For each target repository the action:
+
+1. Clones the target branch and creates the branch `repo-sync/<source-repo>/<target-branch>`.
+   `<target-branch>` is the `@branch` of the target, or `default`. Change the first part with
+   `BRANCH_PREFIX`.
+2. Commits the synced files. By default each file entry gets its own commit, such as
+   `🔄 synced local '<dest>' with remote '<source>'`. With `COMMIT_EACH_FILE: false` everything goes
+   into one commit, `🔄 synced file(s) with <owner>/<source-repo>`.
+3. Opens a pull request titled `🔄 synced file(s) with <owner>/<source-repo>` and labelled `sync`.
+   If a sync pull request from an earlier run is still open, it's updated instead. Set
+   `OVERWRITE_EXISTING_PR: false` to open a new one each run.
+
+Alternatives to this flow:
+
+- `SKIP_PR: true` commits straight to the target branch and opens no pull request.
+- `FORK: <account>` pushes the branch to a fork under that account and opens the pull request from
+  the fork. The token must belong to that account. Labels, assignees and reviewers aren't applied in
+  this mode.
+
+A workflow step that customizes the pull request:
 
 ```yml
-repo_groups:
-  main_repos:
-    - user/repo1
-    - user/repo2
-
-group:
-  - files:
-      - source: LICENSE
-    repos: |
-      user/repo3
-      user/repo4
-```
-
-> **Note:** When `repos` is set to a single word matching a group name (like `backend_services`), it will reference that group. Multi-line strings are always treated as inline repository lists.
-
-### Syncing branches
-
-You can also sync different branches from the same or different repositories (#51). For example, a repository named `foo/bar` with branch `main`, and `sync.yml` contents:
-
-```yml
-group:
-  repos: |
-    foo/bar@de
-    foo/bar@es
-    foo/bar@fr
-  files:
-    - source: .github/workflows/
-      dest: .github/workflows/
-```
-
-Here all files in `.github/workflows/` will be synced from the `main` branch to the branches `de`/`es`/`fr`.
-
-## 📖 Examples
-
-Here are a few examples to help you get started!
-
-### Basic Example
-
-**.github/sync.yml**
-
-```yml
-user/repository:
-  - LICENSE
-  - .gitignore
-```
-
-### Sync all workflow files
-
-This example will keep all your `.github/workflows` files in sync across multiple repositories:
-
-**.github/sync.yml**
-
-```yml
-group:
-  repos: |
-    user/repo1
-    user/repo2
-  files:
-    - source: .github/workflows/
-      dest: .github/workflows/
-```
-
-### Custom labels
-
-By default [repo-file-sync-action](https://github.com/vaivars/repo-sync-action) will add the `sync` label to every PR it creates. You can turn this off by setting `PR_LABELS` to false, or specify your own labels:
-
-**.github/workflows/sync.yml**
-
-```yml
-- name: Run GitHub File Sync
-  uses: vaivars/repo-sync-action@v1
+- uses: vaivars/repo-sync-action@v1
   with:
     GH_PAT: ${{ secrets.GH_PAT }}
     PR_LABELS: |
-      file-sync
+      sync
       automerge
+    ASSIGNEES: octocat
+    TEAM_REVIEWERS: platform
+    PR_BODY: Synced from the shared configuration repository.
+    COMMIT_BODY: 'Change-type: patch'
 ```
 
-### Assign a user to the PR
+## Inputs
 
-You can tell [repo-file-sync-action](https://github.com/vaivars/repo-sync-action) to assign users to the PR with `ASSIGNEES`:
+One of `GH_PAT` or `GH_INSTALLATION_TOKEN` is required. All other inputs are optional.
 
-**.github/workflows/sync.yml**
+| Input                   | Description                                                                                                                 | Default                      |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `GH_PAT`                | Personal access token, classic or fine-grained                                                                              |                              |
+| `GH_INSTALLATION_TOKEN` | GitHub App installation token, used when `GH_PAT` isn't set                                                                 |                              |
+| `IS_FINE_GRAINED`       | Set to `true` when `GH_PAT` is a fine-grained token                                                                         | `false`                      |
+| `CONFIG_PATH`           | Path to the sync configuration                                                                                              | `.github/sync.yml`           |
+| `PR_LABELS`             | Pull request labels, one per line. `false` adds none                                                                        | `sync`                       |
+| `PR_BODY`               | Extra text for the pull request description                                                                                 |                              |
+| `ASSIGNEES`             | Users to assign to the pull request, one per line                                                                           |                              |
+| `REVIEWERS`             | Users to request a review from, one per line                                                                                |                              |
+| `TEAM_REVIEWERS`        | Teams to request a review from, one per line                                                                                |                              |
+| `COMMIT_PREFIX`         | Prefix for commit messages and the pull request title                                                                       | `🔄`                         |
+| `COMMIT_BODY`           | Text appended to every commit message after a blank line                                                                    |                              |
+| `COMMIT_EACH_FILE`      | One commit per file entry instead of one commit for everything                                                              | `true`                       |
+| `ORIGINAL_MESSAGE`      | When a push of a single commit triggers the run, reuse its message for commits and its body as the pull request description | `false`                      |
+| `COMMIT_AS_PR_TITLE`    | With `ORIGINAL_MESSAGE`, use the first line of that message as the pull request title                                       | `false`                      |
+| `GIT_USERNAME`          | Commit author name                                                                                                          | `GH_PAT` owner               |
+| `GIT_EMAIL`             | Commit author email                                                                                                         | `GH_PAT` owner               |
+| `BRANCH_PREFIX`         | Prefix for the pull request branch. `SOURCE_REPO_NAME` is replaced with the source repository name                          | `repo-sync/SOURCE_REPO_NAME` |
+| `OVERWRITE_EXISTING_PR` | Update an open sync pull request instead of opening a new one                                                               | `true`                       |
+| `SKIP_PR`               | Commit straight to the target branch without a pull request                                                                 | `false`                      |
+| `FORK`                  | Account whose fork the changes are pushed to before opening the pull request                                                |                              |
+| `DRY_RUN`               | Do everything except push and open pull requests                                                                            | `false`                      |
+| `TMP_DIR`               | Working directory for the clones                                                                                            | `tmp-<timestamp>`            |
+| `SKIP_CLEANUP`          | Keep `TMP_DIR` after the run                                                                                                | `false`                      |
 
-```yml
-- name: Run GitHub File Sync
-  uses: vaivars/repo-sync-action@v1
-  with:
-    GH_PAT: ${{ secrets.GH_PAT }}
-    ASSIGNEES: BetaHuhn
+### Outputs
+
+| Output              | Description                                                                                                                      |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `pull_request_urls` | JSON array of the URLs of pull requests created or updated in this run. Not set if there were none. Read it with `fromJSON(...)` |
+
+## Versioning
+
+Use `@v1` for the latest 1.x release, or pin an exact release tag (`@v1.x.y`) or a commit SHA.
+
+## Development
+
+The tooling is managed with [mise](https://mise.jdx.dev):
+
+```sh
+mise run install  # install dependencies
+mise run lint     # eslint
+mise run format   # dprint
+mise run test     # build, then run the unit and local integration tests
+mise run build    # bundle src/ into dist/
 ```
 
-### Request a PR review
+The action runs the bundled `dist/index.js`. Rebuild and commit `dist/` together with every change
+to `src/`.
 
-You can tell [repo-file-sync-action](https://github.com/vaivars/repo-sync-action) to request a review of the PR from users with `REVIEWERS` and from teams with `TEAM_REVIEWERS`:
+## Credits
 
-**.github/workflows/sync.yml**
+Originally created by Maximilian Schiller ([@BetaHuhn](https://github.com/BetaHuhn)). Inspired by
+`varunsridharan/action-github-workflow-sync` and `adrianjost/files-sync-action`.
 
-```yml
-- name: Run GitHub File Sync
-  uses: vaivars/repo-sync-action@v1
-  with:
-    GH_PAT: ${{ secrets.GH_PAT }}
-    REVIEWERS: |
-      BetaHuhn
-      BetaHuhnBot
-    TEAM_REVIEWERS: engineering
-```
+## License
 
-### Custom GitHub Enterprise Host
-
-If your target repository is hosted on a GitHub Enterprise Server you can specify a custom host name like this:
-
-**.github/workflows/sync.yml**
-
-```yml
-https://custom.host/user/repo:
-  - path/to/file.txt
-
-# or in a group
-
-group:
-  - files:
-      - source: path/to/file.txt
-        dest: path/to/file.txt
-    repos: |
-      https://custom.host/user/repo
-```
-
-> **Note:** The key has to start with http to indicate that you want to use a custom host.
-
-### Different branch prefix
-
-By default all new branches created in the target repo will be in the this format: `repo-sync/SOURCE_REPO_NAME/SOURCE_BRANCH_NAME`, with the SOURCE_REPO_NAME being replaced with the name of the source repo and SOURCE_BRANCH_NAME with the name of the source branch.
-
-If your repo name contains invalid characters, like a dot ([#32](https://github.com/vaivars/repo-sync-action/issues/32)), you can specify a different prefix for the branch (the text before `/SOURCE_BRANCH_NAME`):
-
-**.github/workflows/sync.yml**
-
-```yml
-uses: vaivars/repo-sync-action@v1
-with:
-    GH_PAT: ${{ secrets.GH_PAT }}
-    BRANCH_PREFIX: custom-branch
-```
-
-The new branch will then be `custom-branch/SOURCE_BRANCH_NAME`.
-
-> You can use `SOURCE_REPO_NAME` in your custom branch prefix as well and it will be replaced with the actual repo name
-
-### Custom commit body
-
-You can specify a custom commit body. This will be appended to the commit message, separated by two new lines. For example:
-
-**.github/workflows/sync.yml**
-
-```yml
-- name: Run GitHub File Sync
-  uses: vaivars/repo-sync-action@v1
-  with:
-    GH_PAT: ${{ secrets.GH_PAT }}
-    COMMIT_BODY: "Change-type: patch"
-```
-
-The above example would result in a commit message that looks something like this:
-
-```
-🔄 synced local '<filename>' with remote '<filename>'
-
-Change-type: patch
-```
-
-### Add content to the PR body
-
-You can add more content to the PR body with the `PR_BODY` option. For example:
-
-**.github/workflows/sync.yml**
-
-```yml
-- name: Run GitHub File Sync
-  uses: vaivars/repo-sync-action@v1
-  with:
-    GH_PAT: ${{ secrets.GH_PAT }}
-    PR_BODY: This is your custom PR Body
-```
-
-It will be added below the first line of the body and above the list of changed files. The above example would result in a PR body that looks something like this:
-
-```
-synced local file(s) with GITHUB_REPOSITORY.
-
-This is your custom PR Body
-
-▶ Changed files
+MIT. See [LICENSE](LICENSE).
 
 ---
 
-This PR was created automatically by the repo-file-sync-action workflow run xxx.
-```
-
-### Fork and pull request workflow
-
-If you do not wish to grant this action write access to target repositories, you can specify a bot/user Github acccount that you do have access to with the `FORK` parameter.
-
-A fork of each target repository will be created on this account, and all changes will be pushed to a branch on the fork, instead of upstream. Pull requests will be opened from the forks to target repositories.
-
-Note: while you can open pull requests to target repositories without write access, some features, like applying labels, are not possible.
-
-```yml
-uses: vaivars/repo-sync-action@v1
-with:
-    GH_PAT: ${{ secrets.GH_PAT }}
-    FORK: file-sync-bot
-```
-
-### Advanced sync config
-
-Here's an example showing how to use `repo_groups` to eliminate duplication when syncing common files across multiple repositories.
-
-Without `repo_groups`, you'd have to repeat repository names in multiple groups. With `repo_groups`, you can define repository sets once and reference them:
-
-**.github/sync.yml**
-
-```yml
-repo_groups:
-  # Define reusable repository groups
-  all_repos:
-    - user/do-spaces-action
-    - user/running-at
-    - user/spaces-cli
-    - user/metadata-scraper
-    - user/ejs-serve
-    - user/feedback-js
-    - user/drkmd.js
-  
-  node_repos:
-    - user/do-spaces-action
-    - user/running-at
-    - user/spaces-cli
-    - user/metadata-scraper
-    - user/ejs-serve
-    - user/feedback-js
-    - user/drkmd.js
-  
-  has_releases:
-    - user/do-spaces-action
-    - user/metadata-scraper
-    - user/feedback-js
-    - user/drkmd.js
-
-group:
-  # Dependabot files - all repos
-  - files:
-      - source: configs/dependabot.yml
-        dest: .github/dependabot.yml
-      - source: workflows/dependencies/dependabot.yml
-        dest: .github/workflows/dependabot.yml
-    repos: all_repos
-
-  # Semantic release - only repos with releases
-  - files:
-      - source: workflows/versioning/release-scheduler.yml
-        dest: .github/workflows/release-scheduler.yml
-      - source: workflows/versioning/release.yml
-        dest: .github/workflows/release.yml
-      - source: configs/release.config.js
-        dest: release.config.js
-    repos: has_releases
-
-  # Stale issues workflow - all repos
-  - files:
-      - source: workflows/issues/stale.yml
-        dest: .github/workflows/stale.yml
-    repos: all_repos
-
-  # Lint CI workflow - node repos
-  - files:
-      - source: workflows/node/lint.yml
-        dest: .github/workflows/lint.yml
-    repos: node_repos
-
-  # MIT License - all repos
-  - files:
-      - source: LICENSE
-        dest: LICENSE
-    repos: all_repos
-```
-
-This approach makes it much easier to:
-
-- Add or remove repositories from a group in one place
-- See which repositories are part of each logical grouping
-- Maintain your sync configuration as your repository list grows
-
-## 💻 Development
-
-Issues and PRs are very welcome!
-
-The actual source code of this library is in the `src` folder.
-
-- run `yarn lint` or `npm run lint` to run eslint.
-- run `yarn start` or `npm run start` to run the Action locally.
-- run `yarn build` or `npm run build` to produce a production version of [repo-file-sync-action](https://github.com/vaivars/repo-sync-action) in the `dist` folder.
-
-### Credits
-
-This project was originally developed by ([@betahuhn](https://github.com/BetaHuhn))
-
-This Action was inspired by:
-
-- [action-github-workflow-sync](https://github.com/varunsridharan/action-github-workflow-sync)
-- [files-sync-action](https://github.com/adrianjost/files-sync-action)
-
-## 📄 License
-
-Copyright 2021 Maximilian Schiller
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+> **Note**: This project originally started as a hard fork of
+> [BetaHuhn/repo-file-sync-action](https://github.com/BetaHuhn/repo-file-sync-action).
