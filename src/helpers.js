@@ -202,6 +202,40 @@ export function arrayEquals(array1, array2) {
 	)
 }
 
+// GitHub rejects pull request bodies longer than this
+export const PR_BODY_MAX_LENGTH = 65536
+
+// Renders the changed files of each synced source ({ header, files }) as a collapsed list. Files
+// that do not fit into maxLength characters are summed up in an "...and N more" line instead
+export function formatChangedFiles(sections, maxLength = Infinity) {
+	if (sections.length === 0) return ''
+
+	const start = '<details>\n<summary>Changed files</summary>\n<ul>\n'
+	const end = '\n</ul>\n</details>'
+	const full = start
+		+ sections.map(({ header, files }) => `<li>${header}\n\n${files.join('\n')}</li>`).join('')
+		+ end
+	if (full.length <= maxLength) return full
+
+	const total = sections.reduce((count, { files }) => count + files.length, 0)
+	const pieces = sections.flatMap(({ header, files }, i) => [
+		{ text: `${i === 0 ? '' : '</li>'}<li>${header}\n` },
+		...files.map((file) => ({ text: `\n${file}`, isFile: true })),
+	])
+	// Room for the "...and N more" line and the closing tags
+	const reserve = `<li>...and ${total} more</li>`.length + end.length
+
+	let text = start
+	let listed = 0
+	for (const piece of pieces) {
+		if (text.length + piece.text.length + reserve > maxLength) break
+		text += piece.text
+		if (piece.isFile) listed++
+	}
+
+	return `${text}${text === start ? '<li>' : '\n'}...and ${total - listed} more</li>${end}`
+}
+
 // GitHub's answer when createRef targets a branch that already exists. Octokit
 // appends the docs URL to the message, so match its start, not all of it.
 export function isReferenceExistsError(error) {

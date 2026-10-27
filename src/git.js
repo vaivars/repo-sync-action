@@ -24,7 +24,17 @@ const {
 	FORK,
 } = config
 
-import { dedent, execCmd, execFileBuffer, isReferenceExistsError } from './helpers.js'
+import {
+	dedent,
+	execCmd,
+	execFileBuffer,
+	formatChangedFiles,
+	isReferenceExistsError,
+	PR_BODY_MAX_LENGTH,
+} from './helpers.js'
+
+// setPrWarning puts this on top of an existing PR body while it is being resynced
+const PR_WARNING = '⚠️ This PR is being automatically resynced ⚠️'
 
 export default class Git {
 	constructor() {
@@ -426,7 +436,7 @@ export default class Git {
 			pull_number: this.existingPr.number,
 			// Tagged, so that only the template is dedented and the body keeps its indentation
 			body: dedent`
-				⚠️ This PR is being automatically resynced ⚠️
+				${PR_WARNING}
 
 				${this.existingPr.body}
 			`,
@@ -438,17 +448,14 @@ export default class Git {
 			owner: this.repo.user,
 			repo: this.repo.name,
 			pull_number: this.existingPr.number,
-			body: this.existingPr.body.replace(
-				'⚠️ This PR is being automatically resynced ⚠️',
-				'',
-			),
+			body: this.existingPr.body.replace(PR_WARNING, ''),
 		})
 	}
 
-	async createOrUpdatePr(changedFiles, title, description) {
+	renderPrBody(changedFiles, description) {
 		// Tagged, so that only the template is dedented and the interpolated content keeps its
 		// indentation
-		const body = dedent`
+		return dedent`
 			${
 			description ? description + '\n\n' : ''
 		}synced local file(s) with [${GITHUB_REPOSITORY}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}).
@@ -463,6 +470,16 @@ export default class Git {
 			process.env.GITHUB_RUN_ID || 0
 		}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID || 0})
 		`
+	}
+
+	// changedFiles are the { header, files } sections that formatChangedFiles renders
+	async createOrUpdatePr(changedFiles, title, description) {
+		// The file list gets what the rest of the body leaves of GitHub's limit, keeping room for
+		// the warning that setPrWarning adds on the next run
+		const maxLength = PR_BODY_MAX_LENGTH
+			- `${PR_WARNING}\n\n`.length
+			- this.renderPrBody('', description).length
+		const body = this.renderPrBody(formatChangedFiles(changedFiles, maxLength), description)
 
 		const prTitle = title === undefined
 			? `${COMMIT_PREFIX} synced file(s) with ${GITHUB_REPOSITORY}`

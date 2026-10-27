@@ -4,14 +4,7 @@ import * as path from 'path'
 import { pathToFileURL } from 'url'
 
 import Git from './git.js'
-import {
-	addTrailingSlash,
-	copy,
-	dedent,
-	getSyncedFileList,
-	pathIsDirectory,
-	remove,
-} from './helpers.js'
+import { addTrailingSlash, copy, getSyncedFileList, pathIsDirectory, remove } from './helpers.js'
 
 import { default as config, parseConfig } from './config.js'
 
@@ -132,14 +125,8 @@ async function processRepository(item, git, prUrls) {
 		await git.push()
 
 		if (SKIP_PR === false) {
-			const changedFiles = dedent(`
-				<details>
-				<summary>Changed files</summary>
-				<ul>
-				${modified.map((file) => `<li>${file.message}</li>`).join('')}
-				</ul>
-				</details>
-			`)
+			// Only the per-file commits have a file list
+			const changedFiles = modified.filter((file) => file.files !== undefined)
 
 			const useCommitAsPRTitle = COMMIT_AS_PR_TITLE && useOriginalMessage
 			const prTitle = useCommitAsPRTitle
@@ -147,7 +134,7 @@ async function processRepository(item, git, prUrls) {
 				: undefined
 
 			const pullRequest = await git.createOrUpdatePr(
-				COMMIT_EACH_FILE ? changedFiles : '',
+				COMMIT_EACH_FILE ? changedFiles : [],
 				prTitle,
 				prBody,
 			)
@@ -241,26 +228,18 @@ async function syncFile(file, git, modified) {
 		)
 		const fileStatuses = await git.getFileStatuses()
 
-		const details = syncedFiles
-			.map((filePath) => {
-				const mode = fileStatuses[filePath] || ''
-				let statusText = 'unchanged'
-				if (mode.includes('A') || mode.includes('?')) statusText = 'created'
-				if (mode.includes('M')) statusText = 'updated'
-				if (mode.includes('D')) statusText = 'deleted'
+		const details = syncedFiles.map((filePath) => {
+			const mode = fileStatuses[filePath] || ''
+			let statusText = 'unchanged'
+			if (mode.includes('A') || mode.includes('?')) statusText = 'created'
+			if (mode.includes('M')) statusText = 'updated'
+			if (mode.includes('D')) statusText = 'deleted'
 
-				const relPath = isDirectory
-					? path.relative(file.dest, filePath)
-					: path.basename(filePath)
-				return `\`${relPath}\` - ${statusText}`
-			})
-			.join('\n')
-
-		const prMessage = dedent(`
-			From remote ${directory} <code>${file.source}</code>, synced the following files:
-
-			${details}
-		`)
+			const relPath = isDirectory
+				? path.relative(file.dest, filePath)
+				: path.basename(filePath)
+			return `\`${relPath}\` - ${statusText}`
+		})
 
 		const useOriginalMessage = ORIGINAL_MESSAGE && git.isOneCommitPush()
 		const originalMessage = useOriginalMessage ? git.originalCommitMessage() : undefined
@@ -270,13 +249,11 @@ async function syncFile(file, git, modified) {
 				commit: useOriginalMessage
 					? originalMessage
 					: `${COMMIT_PREFIX} synced local '${file.dest}' with remote '${file.source}'`,
-				pr: prMessage,
 			},
 			false: {
 				commit: useOriginalMessage
 					? originalMessage
 					: `${COMMIT_PREFIX} created local '${file.dest}' from remote '${file.source}'`,
-				pr: prMessage,
 			},
 		}
 
@@ -284,7 +261,9 @@ async function syncFile(file, git, modified) {
 		modified.push({
 			dest: file.dest,
 			source: file.source,
-			message: message[destExists].pr,
+			// The PR body lists these, see formatChangedFiles
+			header: `From remote ${directory} <code>${file.source}</code>, synced the following files:`,
+			files: details,
 			commitMessage: message[destExists].commit,
 		})
 	}

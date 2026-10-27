@@ -494,16 +494,17 @@ describe('PR body', () => {
 	test('keeps the indentation of interpolated content and none of the template', async () => {
 		const { git, requests } = await prGit({ PR_BODY: 'Extra:\n  - indented item' })
 
-		await git.createOrUpdatePr('<details>\n</details>', undefined, 'Body\n    code block')
+		await git.createOrUpdatePr([], undefined, 'Body\n    code block')
 
 		const { body } = requests[0]
 		assert.ok(
 			body.startsWith(
 				'Body\n    code block\n\nsynced local file(s) with [owner/source](https://github.com/owner/source).\n\n'
-					+ 'Extra:\n  - indented item\n\n<details>\n</details>\n\n---\n\nThis PR was created',
+					+ 'Extra:\n  - indented item\n\n',
 			),
 			body,
 		)
+		assert.doesNotMatch(body, /^\t/m)
 	})
 
 	test('keeps the indentation of the existing body when adding the resync warning', async () => {
@@ -516,6 +517,120 @@ describe('PR body', () => {
 			requests[0].body,
 			'⚠️ This PR is being automatically resynced ⚠️\n\nLine\n  indented',
 		)
+	})
+
+	test('lists the changed files of each synced source', async () => {
+		const { git, requests } = await prGit()
+
+		await git.createOrUpdatePr(
+			[
+				{
+					header: 'From remote directory <code>a/</code>:',
+					files: ['`1` - created', '`2` - updated'],
+				},
+				{ header: 'From remote file <code>b</code>:', files: ['`b` - updated'] },
+			],
+			undefined,
+			undefined,
+		)
+
+		assert.ok(
+			requests[0].body.includes(
+				'\n\n<details>\n<summary>Changed files</summary>\n<ul>\n'
+					+ '<li>From remote directory <code>a/</code>:\n\n`1` - created\n`2` - updated</li>'
+					+ '<li>From remote file <code>b</code>:\n\n`b` - updated</li>'
+					+ '\n</ul>\n</details>\n\n---\n\n',
+			),
+			requests[0].body,
+		)
+	})
+
+	test("truncates a long file list so that the body stays under GitHub's limit", async () => {
+		const fileCount = 3000
+		const { git, requests } = await prGit({ PR_BODY: 'x'.repeat(1000) })
+		const failures = []
+		let statusChecks = 0
+		Object.assign(git, {
+			initRepo: async () => {},
+			createPrBranch: async () => {},
+			findExistingPr: async () => undefined,
+			add: async () => {},
+			commit: async () => {},
+			push: async () => {},
+			isOneCommitPush: () => false,
+			getFileStatuses: async () => ({}),
+			// Changes for the synced directory, then nothing left for the final commit
+			hasChanges: async () => ++statusChecks === 1,
+			workingDir: 'work',
+		})
+		const helpers = await import('../src/helpers.js')
+		const { run } = await esmock.strict('../src/index.js', {
+			'../src/config.js': {
+				default: {
+					COMMIT_EACH_FILE: true,
+					COMMIT_PREFIX: '🔄',
+					PR_LABELS: [],
+					DRY_RUN: false,
+					TMP_DIR: 'tmp',
+					SKIP_CLEANUP: true,
+					OVERWRITE_EXISTING_PR: true,
+					SKIP_PR: false,
+					ORIGINAL_MESSAGE: false,
+					COMMIT_AS_PR_TITLE: false,
+					FORK: false,
+				},
+				parseConfig: async () => [{
+					repo: {
+						name: 'repo',
+						user: 'owner',
+						fullName: 'github.com/owner/repo',
+						branch: 'default',
+					},
+					files: [{ source: 'src-dir', dest: 'dest-dir', replace: true }],
+				}],
+			},
+			'../src/git.js': {
+				default: class {
+					constructor() {
+						return git
+					}
+				},
+			},
+			'../src/helpers.js': {
+				...helpers,
+				copy: async () => {},
+				pathIsDirectory: async () => true,
+				getSyncedFileList: async (_src, dest) =>
+					Array.from(
+						{ length: fileCount },
+						(_, i) => `${dest}/some/deeply/nested/directory/file-${i}.txt`,
+					),
+				remove: async () => {},
+			},
+			fs: { existsSync: () => true },
+		}, {
+			'@actions/core': {
+				...silentCore,
+				notice: () => {},
+				setOutput: () => {},
+				setFailed: (message) => failures.push(message),
+			},
+		})
+
+		await run()
+
+		assert.deepEqual(failures, [])
+		assert.equal(requests.length, 1)
+		const { body } = requests[0]
+		assert.ok(body.length <= 65536, `body is ${body.length} characters`)
+		const listed = body.match(/^`some\/deeply\/nested\/directory\/file-\d+\.txt` - unchanged$/gm)
+		const [, more] = body.match(/\n\.\.\.and (\d+) more<\/li>\n<\/ul>\n<\/details>\n/)
+		assert.equal(listed.length + Number(more), fileCount)
+
+		// The resync warning added on the next run has to fit as well
+		git.existingPr = { number: 1, body }
+		await git.setPrWarning()
+		assert.ok(requests[1].body.length <= 65536, `body is ${requests[1].body.length} characters`)
 	})
 })
 
