@@ -440,6 +440,41 @@ describe('Git.uploadGitHubBlob', () => {
 	}
 })
 
+describe('Git.getTreeDiff', () => {
+	test('keeps paths with spaces and non-ASCII characters intact', async () => {
+		const dir = await makeRepo([
+			{ 'plain.txt': 'one', 'removed file.txt': 'removed later' },
+			{
+				'plain.txt': 'two',
+				'removed file.txt': null,
+				'dir with space/file name.txt': 'added',
+				'ünïcödé.txt': 'added',
+			},
+		])
+		const git = await loadGit()
+		git.workingDir = dir
+
+		const diff = await git.getTreeDiff(await git.getTreeId('HEAD'), await git.getTreeId('HEAD~1'))
+
+		const byPath = Object.fromEntries(diff.map((entry) => [entry.path, entry]))
+		assert.deepEqual(Object.keys(byPath).sort(), [
+			'dir with space/file name.txt',
+			'plain.txt',
+			'removed file.txt',
+			'ünïcödé.txt',
+		])
+		assert.deepEqual(byPath['ünïcödé.txt'], {
+			newMode: '100644',
+			previousMode: '000000',
+			newBlob: gitIn(dir, 'rev-parse', 'HEAD:ünïcödé.txt'),
+			previousBlob: '0000000000000000000000000000000000000000',
+			change: 'D',
+			path: 'ünïcödé.txt',
+		})
+		assert.equal(byPath['removed file.txt'].newMode, '000000')
+	})
+})
+
 describe('templates', () => {
 	test('render values without HTML escaping', async () => {
 		const { write } = await loadHelpers()

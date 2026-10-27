@@ -285,16 +285,21 @@ export default class Git {
 	}
 
 	async getTreeDiff(referenceTreeId, differenceTreeId) {
+		// -z prints paths verbatim, so they are not quoted and can contain spaces
 		const output = await execCmd(
-			`git diff-tree ${referenceTreeId} ${differenceTreeId} -r`,
+			`git diff-tree -z -r ${referenceTreeId} ${differenceTreeId}`,
 			this.workingDir,
+			false,
 		)
 
+		// Each entry is ":<mode> <mode> <blob> <blob> <change>" NUL "<path>" NUL
+		const fields = output.split('\0')
 		const diff = []
-		for (const line of output.split('\n')) {
-			const splitted = line.replace(/^:/, '').replace(/\t/g, ' ').split(' ')
-
-			const [newMode, previousMode, newBlob, previousBlob, change, path] = splitted
+		for (let i = 0; i + 1 < fields.length; i += 2) {
+			const [newMode, previousMode, newBlob, previousBlob, change] = fields[i]
+				.replace(/^:/, '')
+				.split(' ')
+			const path = fields[i + 1]
 
 			diff.push({
 				newMode,
