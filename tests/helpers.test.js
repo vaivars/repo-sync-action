@@ -38,6 +38,34 @@ async function loadHelpers() {
 	})
 }
 
+// config.js reads its inputs when it is imported, so every call loads a fresh copy of it
+async function loadConfig(syncYml, inputs = {}) {
+	const dir = await makeTmpDir()
+	const configPath = path.join(dir, 'sync.yml')
+	await fs.writeFile(configPath, syncYml)
+
+	for (const key of Object.keys(process.env)) {
+		if (key.startsWith('INPUT_')) delete process.env[key]
+	}
+	const env = {
+		GH_PAT: 'test-token',
+		GITHUB_REPOSITORY: 'owner/source',
+		CONFIG_PATH: configPath,
+		TMP_DIR: path.join(dir, 'work'),
+		...inputs,
+	}
+	for (const [key, value] of Object.entries(env)) {
+		if (value !== undefined) process.env[`INPUT_${key}`] = value
+	}
+	process.env.GITHUB_SERVER_URL = 'https://github.com'
+
+	const warnings = []
+	const config = await esmock('../src/config.js', {
+		'@actions/core': { ...silentCore, warning: (message) => warnings.push(message) },
+	})
+	return { context: config.default, parseConfig: config.parseConfig, warnings }
+}
+
 // Shaped like Octokit's RequestError for POST /repos/{owner}/{repo}/git/refs
 function requestError(status, message) {
 	const error = new Error(message)
@@ -89,5 +117,49 @@ describe('copy with deleteOrphaned', () => {
 		assert.equal(await fs.readFile(path.join(dest, 'kept.txt'), 'utf8'), 'source')
 		assert.equal(await fs.pathExists(path.join(dest, '.gitkeep')), true)
 		assert.equal(await fs.pathExists(path.join(dest, '.github/workflow.yml')), true)
+	})
+})
+
+describe('exclude', () => {
+	// A source directory with excluded entries, parsed through the real config
+	async function excludeSetup() {
+		const dir = await makeTmpDir()
+		const src = path.join(dir, 'src')
+		await writeTree(src, {
+			'a.txt': '{{ name }}',
+			'skip.txt': 'excluded file',
+			'local/x.txt': 'excluded directory',
+		})
+		const { parseConfig } = await loadConfig(`
+owner/target:
+  - source: ${src}/
+    dest: out/
+    template:
+      name: synced
+    exclude: |
+      skip.txt
+      local/
+`)
+		const [{ files: [file] }] = await parseConfig()
+		return { dir, file }
+	}
+
+	test('applies in template mode', async () => {
+		const { copy } = await loadHelpers()
+		const { dir, file } = await excludeSetup()
+		const dest = path.join(dir, 'dest/')
+
+		await copy(file.source, dest, true, file)
+
+		assert.equal(await fs.readFile(path.join(dest, 'a.txt'), 'utf8'), 'synced')
+		assert.equal(await fs.pathExists(path.join(dest, 'skip.txt')), false)
+		assert.equal(await fs.pathExists(path.join(dest, 'local')), false)
+	})
+
+	test('leaves excluded files out of the synced file list', async () => {
+		const { getSyncedFileList } = await loadHelpers()
+		const { file } = await excludeSetup()
+
+		assert.deepEqual(await getSyncedFileList(file.source, file.dest, true, file), ['out/a.txt'])
 	})
 })

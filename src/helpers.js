@@ -112,11 +112,12 @@ export async function copy(src, dest, isDirectory, file) {
 				hidden: true,
 			})
 			for (const srcFile of srcFileList) {
-				if (!filterFunc(srcFile)) {
+				const srcPath = path.join(src, srcFile)
+				// Exclude entries carry the source prefix, like the paths fs.copy passes to the filter
+				if (!filterFunc(srcPath)) {
 					continue
 				}
 
-				const srcPath = path.join(src, srcFile)
 				const destPath = path.join(dest, srcFile)
 				await write(srcPath, destPath, file.template)
 			}
@@ -174,7 +175,7 @@ export async function getSyncedFileList(src, dest, isDirectory, file) {
 			hidden: true,
 		})
 		return srcFileList
-			.filter((srcFile) => filterFunc(srcFile))
+			.filter((srcFile) => filterFunc(path.join(src, srcFile)))
 			.map((srcFile) => path.join(dest, srcFile))
 	} else {
 		return [dest]
