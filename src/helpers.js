@@ -1,5 +1,5 @@
 import * as core from '@actions/core'
-import { exec } from 'child_process'
+import { exec, execFile } from 'child_process'
 import fs from 'fs-extra'
 import nunjucks from 'nunjucks'
 import * as path from 'path'
@@ -49,6 +49,25 @@ export function execCmd(command, workingDir, trimResult = true) {
 			},
 			function(error, stdout) {
 				error ? reject(error) : resolve(trimResult ? stdout.trim() : stdout)
+			},
+		)
+	})
+}
+
+// Runs a program without a shell and resolves with its stdout as raw bytes, with no size limit
+export function execFileBuffer(file, args, workingDir) {
+	core.debug(`EXEC: "${file} ${args.join(' ')}" IN ${workingDir}`)
+	return new Promise((resolve, reject) => {
+		execFile(
+			file,
+			args,
+			{
+				cwd: workingDir,
+				encoding: 'buffer',
+				maxBuffer: Infinity,
+			},
+			function(error, stdout) {
+				error ? reject(error) : resolve(stdout)
 			},
 		)
 	})

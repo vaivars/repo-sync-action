@@ -24,7 +24,7 @@ const {
 	FORK,
 } = config
 
-import { dedent, execCmd, isReferenceExistsError } from './helpers.js'
+import { dedent, execCmd, execFileBuffer, isReferenceExistsError } from './helpers.js'
 
 export default class Git {
 	constructor() {
@@ -312,17 +312,14 @@ export default class Git {
 	// Creates the blob objects in GitHub for the files that are not in the previous commit only
 	async uploadGitHubBlob(blob) {
 		core.debug(`Uploading GitHub Blob for blob ${blob}`)
-		const fileContent = await execCmd(
-			`git cat-file -p ${blob}`,
-			this.workingDir,
-			false,
-		)
+		// Raw bytes: decoding them as text would corrupt binary files and change the blob sha
+		const fileContent = await execFileBuffer('git', ['cat-file', 'blob', blob], this.workingDir)
 
 		// Creates the blob. We don't need to store the response because the local sha is the same and we can use it to reference the blob
 		return this.github.git.createBlob({
 			owner: this.repo.user,
 			repo: this.repo.name,
-			content: Buffer.from(fileContent).toString('base64'),
+			content: fileContent.toString('base64'),
 			encoding: 'base64',
 		})
 	}

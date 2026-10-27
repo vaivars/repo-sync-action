@@ -1,6 +1,8 @@
 import esmock from 'esmock'
 import fs from 'fs-extra'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { after, describe, test } from 'node:test'
 
@@ -21,6 +23,38 @@ async function writeTree(root, files) {
 	for (const [file, content] of Object.entries(files)) {
 		await fs.outputFile(path.join(root, file), content)
 	}
+}
+
+function gitIn(cwd, ...args) {
+	return execFileSync('git', [
+		'-c',
+		'user.name=test',
+		'-c',
+		'user.email=test@example.com',
+		'-c',
+		'commit.gpgsign=false',
+		...args,
+	], { cwd, encoding: 'utf8' }).trim()
+}
+
+// A git repo with one commit per entry of `commits`; a null content deletes the file
+async function makeRepo(commits) {
+	const dir = await makeTmpDir()
+	gitIn(dir, 'init', '-q')
+	for (const files of commits) {
+		for (const [file, content] of Object.entries(files)) {
+			if (content === null) await fs.remove(path.join(dir, file))
+			else await fs.outputFile(path.join(dir, file), content)
+		}
+		gitIn(dir, 'add', '-A')
+		gitIn(dir, 'commit', '-q', '-m', 'commit')
+	}
+	return dir
+}
+
+// The sha GitHub gives a blob with these bytes
+function gitBlobSha(bytes) {
+	return createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')
 }
 
 const silentCore = {
@@ -379,6 +413,31 @@ describe('Git.push', () => {
 		assert.equal(refUpdates[0].ref, 'heads/repo-sync/source/default')
 		assert.equal(refUpdates[0].force, true)
 	})
+})
+
+describe('Git.uploadGitHubBlob', () => {
+	const files = {
+		'binary file': Buffer.from(Array.from({ length: 256 }, (_, i) => i)),
+		'file over 4MB': Buffer.alloc(5 * 1024 * 1024, 'x'),
+	}
+
+	for (const [name, bytes] of Object.entries(files)) {
+		test(`uploads a ${name} byte for byte`, async () => {
+			const dir = await makeRepo([{ 'file.bin': bytes }])
+			const blobs = []
+			const git = await loadGit({
+				octokit: { git: { createBlob: async (params) => blobs.push(params) } },
+			})
+			Object.assign(git, { workingDir: dir, repo: { user: 'owner', name: 'repo' } })
+			const sha = gitIn(dir, 'rev-parse', 'HEAD:file.bin')
+
+			await git.uploadGitHubBlob(sha)
+
+			assert.equal(blobs.length, 1)
+			assert.equal(blobs[0].encoding, 'base64')
+			assert.equal(gitBlobSha(Buffer.from(blobs[0].content, 'base64')), sha)
+		})
+	}
 })
 
 describe('templates', () => {
