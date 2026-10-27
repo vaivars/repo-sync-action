@@ -120,6 +120,20 @@ describe('copy with deleteOrphaned', () => {
 	})
 })
 
+describe('templates', () => {
+	test('render values without HTML escaping', async () => {
+		const { write } = await loadHelpers()
+		const dir = await makeTmpDir()
+		const src = path.join(dir, 'config.yml')
+		const dest = path.join(dir, 'out.yml')
+		await fs.writeFile(src, 'run: {{ command }}\n')
+
+		await write(src, dest, { command: `echo "a & b" > 'c' <d>` })
+
+		assert.equal(await fs.readFile(dest, 'utf8'), `run: echo "a & b" > 'c' <d>\n`)
+	})
+})
+
 describe('exclude', () => {
 	// A source directory with excluded entries, parsed through the real config
 	async function excludeSetup() {

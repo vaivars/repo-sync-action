@@ -4,7 +4,8 @@ import fs from 'fs-extra'
 import nunjucks from 'nunjucks'
 import * as path from 'path'
 
-nunjucks.configure({ autoescape: true, trimBlocks: true, lstripBlocks: true })
+// Templates are config and code files, not HTML, so values are inserted as they are
+nunjucks.configure({ autoescape: false, trimBlocks: true, lstripBlocks: true })
 
 // From https://github.com/MartinKolarik/dedent-js/blob/master/src/index.ts - MIT © 2015 Martin Kolárik
 export function dedent(templateStrings, ...values) {
