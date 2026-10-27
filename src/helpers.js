@@ -70,30 +70,18 @@ export async function write(src, dest, context) {
 	await fs.outputFile(dest, content)
 }
 
+// An exclude entry matches the path itself and everything below it, the same way fs.copy skips
+// the whole subtree of a directory that the filter rejects. Entries carry the source prefix
+function isExcluded(exclude, filePath) {
+	return exclude !== undefined
+		&& exclude.some((entry) => filePath === entry || filePath.startsWith(addTrailingSlash(entry)))
+}
+
 export function createFilterFunc(file) {
-	const exclude = file.exclude
-	return (file) => {
-		if (exclude !== undefined) {
-			// Check if file-path is one of the present filepaths in the excluded paths
-			// This has presedence over the single file, and therefore returns before the single file check
-			const filePath = file.endsWith('/')
-				? file // File item is a folder
-				: file.split('/').slice(0, -1).join('/') + '/' // File item is a file
-
-			if (exclude.includes(filePath)) {
-				core.debug(
-					`Excluding file ${file} since its path is included as one of the excluded paths.`,
-				)
-				return false
-			}
-
-			// Or if the file itself is in the excluded files
-			if (exclude.includes(file)) {
-				core.debug(
-					`Excluding file ${file} since it is explicitly added in the exclusion list.`,
-				)
-				return false
-			}
+	return (filePath) => {
+		if (isExcluded(file.exclude, filePath)) {
+			core.debug(`Excluding file ${filePath} since it or a parent directory is excluded.`)
+			return false
 		}
 		return true
 	}
@@ -152,10 +140,7 @@ export async function copy(src, dest, isDirectory, file) {
 				const filePath = path.join(dest, destFile)
 				core.debug(`Found an orphaned file in the target repo - ${filePath}`)
 
-				if (
-					file.exclude !== undefined
-					&& file.exclude.includes(path.join(src, destFile))
-				) {
+				if (isExcluded(file.exclude, path.join(src, destFile))) {
 					core.debug(`Excluding file ${destFile}`)
 				} else {
 					core.debug(`Removing file ${destFile}`)

@@ -162,4 +162,67 @@ owner/target:
 
 		assert.deepEqual(await getSyncedFileList(file.source, file.dest, true, file), ['out/a.txt'])
 	})
+
+	for (const template of [false, true]) {
+		test(`covers files nested below an excluded directory (template: ${template})`, async () => {
+			const { copy, readfiles } = await loadHelpers()
+			const dir = await makeTmpDir()
+			const src = path.join(dir, 'src')
+			await writeTree(src, {
+				'a.txt': 'a',
+				'local/x.txt': 'excluded',
+				'local/sub/y.txt': 'excluded',
+				'keep/k.txt': 'excluded',
+				'keepsake.txt': 'not excluded',
+			})
+			const { parseConfig } = await loadConfig(`
+owner/target:
+  - source: ${src}/
+    template: ${template}
+    exclude: |
+      local/
+      keep
+`)
+			const [{ files: [file] }] = await parseConfig()
+			const dest = path.join(dir, 'dest/')
+
+			await copy(file.source, dest, true, file)
+
+			assert.deepEqual((await readfiles(dest)).sort(), ['a.txt', 'keepsake.txt'])
+		})
+	}
+
+	test('protects target files below an excluded directory from deleteOrphaned', async () => {
+		const { copy } = await loadHelpers()
+		const dir = await makeTmpDir()
+		const src = path.join(dir, 'src')
+		const dest = path.join(dir, 'dest/')
+		await writeTree(src, { 'a.txt': 'source' })
+		await writeTree(dest, {
+			'a.txt': 'old',
+			'local/custom.txt': 'target only',
+			'local/sub/deep.txt': 'target only',
+			'keep/k.txt': 'target only',
+			'localfile.txt': 'orphan',
+			'orphan.txt': 'orphan',
+		})
+		const { parseConfig } = await loadConfig(`
+owner/target:
+  - source: ${src}/
+    deleteOrphaned: true
+    exclude: |
+      local/
+      keep
+`)
+		const [{ files: [file] }] = await parseConfig()
+
+		await copy(file.source, dest, true, file)
+
+		assert.equal(await fs.readFile(path.join(dest, 'a.txt'), 'utf8'), 'source')
+		assert.equal(await fs.pathExists(path.join(dest, 'local/custom.txt')), true)
+		assert.equal(await fs.pathExists(path.join(dest, 'local/sub/deep.txt')), true)
+		assert.equal(await fs.pathExists(path.join(dest, 'keep/k.txt')), true)
+		assert.equal(await fs.pathExists(path.join(dest, 'localfile.txt')), false)
+		assert.equal(await fs.pathExists(path.join(dest, 'orphan.txt')), false)
+	})
 })
