@@ -317,6 +317,70 @@ describe('Git.initRepo with FORK', () => {
 	}
 })
 
+describe('Git.push', () => {
+	async function pushWith(config) {
+		const commands = []
+		const refUpdates = []
+		const git = await loadGit({
+			config,
+			octokit: {
+				git: {
+					createRef: async () => ({}),
+					updateRef: async (params) => refUpdates.push(params),
+				},
+			},
+			commands,
+		})
+		Object.assign(git, {
+			repo: { user: 'owner', name: 'repo' },
+			workingDir: 'work',
+			gitUrl: 'https://test-token@github.com/owner/repo.git',
+			baseBranch: 'main',
+			prBranch: 'repo-sync/source/default',
+			lastCommitSha: 'abc123',
+			getCommitsToPush: async () => [],
+		})
+
+		await git.push()
+
+		return { commands, refUpdates }
+	}
+
+	test('does not force push the base branch with SKIP_PR', async () => {
+		const { commands } = await pushWith({ SKIP_PR: true })
+
+		assert.deepEqual(commands, ['git push https://test-token@github.com/owner/repo.git'])
+	})
+
+	test('force pushes the recreated PR branch', async () => {
+		const { commands } = await pushWith({ SKIP_PR: false })
+
+		assert.deepEqual(commands, ['git push https://test-token@github.com/owner/repo.git --force'])
+	})
+
+	test('force pushes the PR branch to the fork', async () => {
+		const { commands } = await pushWith({ SKIP_PR: false, FORK: 'forker' })
+
+		assert.deepEqual(commands, ['git push -u fork repo-sync/source/default --force'])
+	})
+
+	test('does not force update the base branch ref with SKIP_PR and an installation token', async () => {
+		const { refUpdates } = await pushWith({ SKIP_PR: true, IS_INSTALLATION_TOKEN: true })
+
+		assert.equal(refUpdates.length, 1)
+		assert.equal(refUpdates[0].ref, 'heads/main')
+		assert.equal(refUpdates[0].force, false)
+	})
+
+	test('force updates the PR branch ref with an installation token', async () => {
+		const { refUpdates } = await pushWith({ SKIP_PR: false, IS_INSTALLATION_TOKEN: true })
+
+		assert.equal(refUpdates.length, 1)
+		assert.equal(refUpdates[0].ref, 'heads/repo-sync/source/default')
+		assert.equal(refUpdates[0].force, true)
+	})
+})
+
 describe('templates', () => {
 	test('render values without HTML escaping', async () => {
 		const { write } = await loadHelpers()

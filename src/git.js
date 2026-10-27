@@ -379,7 +379,9 @@ export default class Git {
 			repo: this.repo.name,
 			ref: `heads/${SKIP_PR === false ? this.prBranch : this.baseBranch}`,
 			sha: this.lastCommitSha,
-			force: true,
+			// The PR branch is recreated on every run. The base branch must only fast-forward, so
+			// that the update fails instead of dropping commits pushed while the sync ran
+			force: SKIP_PR === false,
 		})
 		core.debug(`Commit using GitHub API completed`)
 	}
@@ -398,7 +400,8 @@ export default class Git {
 		if (IS_INSTALLATION_TOKEN) {
 			return await this.createGithubVerifiedCommits()
 		}
-		return execCmd(`git push ${this.gitUrl} --force`, this.workingDir)
+		// With SKIP_PR the commits go straight onto the base branch, which must not be force pushed
+		return execCmd(`git push ${this.gitUrl}${SKIP_PR === false ? ' --force' : ''}`, this.workingDir)
 	}
 
 	async findExistingPr() {
