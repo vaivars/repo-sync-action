@@ -136,6 +136,34 @@ https://ghe.example.com/owner/repo@main:
 			'ghe.example.com/owner/repo@main',
 		])
 	})
+
+	test('skips file entries without a source and repos without files', async () => {
+		const { parseConfig, warnings } = await loadConfig(`
+owner/valid:
+  - source: a.txt
+  - dest: no-source.txt
+  -
+owner/null-list:
+owner/empty-list: []
+group:
+  - repos: owner/group-null
+    files:
+  - repos: owner/valid
+    files:
+      - b.txt
+`)
+
+		const repos = await parseConfig()
+
+		assert.deepEqual(
+			repos.map(({ repo, files }) => [repo.fullName, files.map((file) => file.source)]),
+			[['github.com/owner/valid', ['a.txt', 'b.txt']]],
+		)
+		assert.equal(warnings.filter((warning) => warning.includes('owner/valid')).length, 2)
+		for (const name of ['owner/null-list', 'owner/empty-list', 'owner/group-null']) {
+			assert.ok(warnings.some((warning) => warning.includes(name)), `no warning for ${name}`)
+		}
+	})
 })
 
 describe('templates', () => {

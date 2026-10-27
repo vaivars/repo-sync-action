@@ -109,12 +109,16 @@ const parseExclude = (text, src) => {
 	return files.map((file) => path.join(src, file))
 }
 
-const parseFiles = (files) => {
-	return files.map((item) => {
+// Returns the valid file entries. A missing or empty list yields none, and parseConfig skips the
+// repo with a warning if it ends up without any files
+const parseFiles = (files, target) => {
+	if (!Array.isArray(files)) return []
+
+	return files.flatMap((item) => {
 		if (typeof item === 'string') item = { source: item }
 
-		if (item.source !== undefined) {
-			return {
+		if (typeof item?.source === 'string' && item.source !== '') {
+			return [{
 				source: item.source,
 				dest: item.dest || item.source,
 				template: item.template === undefined ? TEMPLATE_DEFAULT : item.template,
@@ -123,10 +127,11 @@ const parseFiles = (files) => {
 					? DELETE_ORPHANED_DEFAULT
 					: item.deleteOrphaned,
 				exclude: parseExclude(item.exclude, item.source),
-			}
+			}]
 		}
 
-		core.warning('Warn: No source files specified')
+		core.warning(`Skipping a file entry for ${target} without a source: ${JSON.stringify(item)}`)
+		return []
 	})
 }
 
@@ -220,7 +225,7 @@ export async function parseConfig() {
 				const repos = resolveRepoList(group.repos, repoGroups)
 
 				repos.forEach((name) => {
-					const files = parseFiles(group.files)
+					const files = parseFiles(group.files, name)
 					const repo = parseRepoName(name)
 
 					if (result[repo.uniqueName] !== undefined) {
@@ -235,7 +240,7 @@ export async function parseConfig() {
 				})
 			})
 		} else {
-			const files = parseFiles(configObject[key])
+			const files = parseFiles(configObject[key], key)
 			const repo = parseRepoName(key)
 
 			if (result[repo.uniqueName] !== undefined) {
@@ -250,7 +255,12 @@ export async function parseConfig() {
 		}
 	})
 
-	return Object.values(result)
+	return Object.values(result).filter(({ repo, files }) => {
+		if (files.length > 0) return true
+
+		core.warning(`Skipping ${repo.uniqueName}: it has no files to sync`)
+		return false
+	})
 }
 
 export default context
