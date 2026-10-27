@@ -63,9 +63,10 @@ export default class Git {
 		// Set values to current repo
 		this.repo = repo
 		this.workingDir = path.join(TMP_DIR, repo.uniqueName)
-		this.gitUrl = `https://${IS_INSTALLATION_TOKEN ? 'x-access-token:' : ''}${
+		const credentials = `${IS_INSTALLATION_TOKEN ? 'x-access-token:' : ''}${
 			IS_FINE_GRAINED ? 'oauth:' : ''
-		}${GITHUB_TOKEN}@${repo.fullName}.git`
+		}${GITHUB_TOKEN}`
+		this.gitUrl = `https://${credentials}@${repo.fullName}.git`
 
 		await this.clone()
 		await this.setIdentity()
@@ -73,11 +74,9 @@ export default class Git {
 		await this.getLastCommitSha()
 
 		if (FORK) {
-			const forkUrl = new URL(GITHUB_SERVER_URL)
-			forkUrl.username = GITHUB_TOKEN
-			forkUrl.pathname = `${FORK}/${this.repo.name}.git`
+			const forkUrl = `https://${credentials}@${repo.host}/${FORK}/${repo.name}.git`
 			await this.createFork()
-			await this.createRemote(forkUrl.toString())
+			await this.createRemote(forkUrl)
 		}
 	}
 

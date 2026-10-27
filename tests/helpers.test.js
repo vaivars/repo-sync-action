@@ -278,6 +278,45 @@ describe('Git.setIdentity', () => {
 	}
 })
 
+describe('Git.initRepo with FORK', () => {
+	const repo = {
+		fullName: 'ghe.example.com/owner/repo',
+		uniqueName: 'ghe.example.com/owner/repo@default',
+		host: 'ghe.example.com',
+		user: 'owner',
+		name: 'repo',
+		branch: 'default',
+	}
+	const cases = [
+		{ config: {}, credentials: 'test-token' },
+		{ config: { IS_FINE_GRAINED: true }, credentials: 'oauth:test-token' },
+		{ config: { IS_INSTALLATION_TOKEN: true }, credentials: 'x-access-token:test-token' },
+	]
+
+	for (const { config, credentials } of cases) {
+		test(`adds the fork remote on the repo's host with ${credentials}`, async () => {
+			const commands = []
+			const git = await loadGit({
+				config: { ...config, FORK: 'forker', GIT_USERNAME: 'u', GIT_EMAIL: 'e@example.com' },
+				octokit: { repos: { createFork: async () => ({}) } },
+				commands,
+			})
+
+			await git.initRepo(repo)
+
+			assert.ok(
+				commands.some((command) => command.includes(`https://${credentials}@${repo.fullName}.git`)),
+			)
+			assert.ok(
+				commands.includes(
+					`git remote add fork https://${credentials}@ghe.example.com/forker/repo.git`,
+				),
+				commands.join('\n'),
+			)
+		})
+	}
+})
+
 describe('templates', () => {
 	test('render values without HTML escaping', async () => {
 		const { write } = await loadHelpers()
