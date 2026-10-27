@@ -19,8 +19,11 @@ run = "dprint check"
 
 [tasks.test]
 depends = ["build"]
-description = "Run local integration test with mocked git"
-run = "node tests/local-sync.test.js"
+description = "Run the unit tests and the local integration test with mocked git"
+run = [
+    "node --test tests/helpers.test.js",
+    "node tests/local-sync.test.js",
+]
 
 [tasks.test-ci]
 hide = true

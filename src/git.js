@@ -24,7 +24,7 @@ const {
 	FORK,
 } = config
 
-import { dedent, execCmd } from './helpers.js'
+import { dedent, execCmd, isReferenceExistsError } from './helpers.js'
 
 export default class Git {
 	constructor() {
@@ -359,7 +359,7 @@ export default class Git {
 				core.debug(`Created new branch ${this.prBranch}`)
 			} catch (error) {
 				// If the branch exists ignores the error
-				if (error.message !== 'Reference already exists') throw error
+				if (!isReferenceExistsError(error)) throw error
 			}
 		}
 
