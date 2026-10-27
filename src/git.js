@@ -109,13 +109,18 @@ export default class Git {
 		let username = GIT_USERNAME
 		let email = GIT_EMAIL
 
-		if (email === undefined) {
-			if (!IS_INSTALLATION_TOKEN) {
-				const { data } = await this.github.users.getAuthenticated()
-				email = data.email
-				username = data.login
-			}
+		// Fill in only what was not given. An installation token cannot read GET /user
+		if ((!username || !email) && !IS_INSTALLATION_TOKEN) {
+			const { data } = await this.github.users.getAuthenticated()
+			username = username || data.login
+			// The profile email is null when it is private, so use the account's noreply address
+			email = email || data.email || `${data.id}+${data.login}@users.noreply.github.com`
 		}
+
+		// An installation token without GIT_USERNAME/GIT_EMAIL: git still needs an identity to
+		// create the local commits
+		username = username || 'github-actions[bot]'
+		email = email || '41898282+github-actions[bot]@users.noreply.github.com'
 
 		core.debug(`Setting git user to email: ${email}, username: ${username}`)
 

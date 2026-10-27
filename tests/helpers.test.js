@@ -66,6 +66,47 @@ async function loadConfig(syncYml, inputs = {}) {
 	return { context: config.default, parseConfig: config.parseConfig, warnings }
 }
 
+const GIT_CONFIG = {
+	GITHUB_TOKEN: 'test-token',
+	GITHUB_SERVER_URL: 'https://github.com',
+	IS_INSTALLATION_TOKEN: false,
+	IS_FINE_GRAINED: false,
+	GIT_USERNAME: undefined,
+	GIT_EMAIL: undefined,
+	TMP_DIR: 'tmp',
+	COMMIT_BODY: '',
+	COMMIT_PREFIX: '🔄',
+	GITHUB_REPOSITORY: 'owner/source',
+	OVERWRITE_EXISTING_PR: true,
+	SKIP_PR: false,
+	PR_BODY: '',
+	BRANCH_PREFIX: 'repo-sync/SOURCE_REPO_NAME',
+	FORK: false,
+}
+
+// A Git instance with a fixed config and a fake Octokit. With `commands`, shell commands are
+// recorded there instead of being run
+async function loadGit({ config = {}, octokit = {}, commands } = {}) {
+	const helpers = await import('../src/helpers.js')
+	const mocks = {
+		'../src/config.js': { default: { ...GIT_CONFIG, ...config } },
+		'@actions/github': { getOctokit: () => ({ rest: octokit }), context: {} },
+	}
+	if (commands) {
+		mocks['../src/helpers.js'] = {
+			...helpers,
+			execCmd: async (command) => {
+				commands.push(command)
+				return ''
+			},
+		}
+	}
+	const { default: Git } = await esmock.strict('../src/git.js', mocks, {
+		'@actions/core': silentCore,
+	})
+	return new Git()
+}
+
 // Shaped like Octokit's RequestError for POST /repos/{owner}/{repo}/git/refs
 function requestError(status, message) {
 	const error = new Error(message)
@@ -172,6 +213,69 @@ group:
 			assert.ok(warnings.some((warning) => warning.includes(name)), `no warning for ${name}`)
 		}
 	})
+})
+
+describe('Git.setIdentity', () => {
+	function userApi(user) {
+		return {
+			users: {
+				getAuthenticated: async () => {
+					if (!user) throw new Error('GET /user must not be called')
+					return { data: user }
+				},
+			},
+		}
+	}
+
+	const bot = { login: 'bot', id: 7, email: 'bot@example.com' }
+	const cases = [
+		{
+			name: 'keeps GIT_USERNAME when only GIT_EMAIL is missing',
+			config: { GIT_USERNAME: 'custom' },
+			user: bot,
+			identity: ['custom', 'bot@example.com'],
+		},
+		{
+			name: 'keeps GIT_EMAIL when only GIT_USERNAME is missing',
+			config: { GIT_EMAIL: 'me@example.com' },
+			user: bot,
+			identity: ['bot', 'me@example.com'],
+		},
+		{
+			name: 'uses the noreply address when the profile email is private',
+			config: {},
+			user: { ...bot, email: null },
+			identity: ['bot', '7+bot@users.noreply.github.com'],
+		},
+		{
+			name: 'does not call GET /user when both are given',
+			config: { GIT_USERNAME: 'custom', GIT_EMAIL: 'me@example.com' },
+			identity: ['custom', 'me@example.com'],
+		},
+		{
+			name: 'falls back to the GitHub Actions bot for an installation token',
+			config: { IS_INSTALLATION_TOKEN: true },
+			identity: ['github-actions[bot]', '41898282+github-actions[bot]@users.noreply.github.com'],
+		},
+		{
+			name: 'keeps GIT_USERNAME for an installation token',
+			config: { IS_INSTALLATION_TOKEN: true, GIT_USERNAME: 'custom' },
+			identity: ['custom', '41898282+github-actions[bot]@users.noreply.github.com'],
+		},
+	]
+
+	for (const { name, config, user, identity: [username, email] } of cases) {
+		test(name, async () => {
+			const commands = []
+			const git = await loadGit({ config, octokit: userApi(user), commands })
+
+			await git.setIdentity()
+
+			assert.deepEqual(commands, [
+				`git config --local user.name "${username}" && git config --local user.email "${email}"`,
+			])
+		})
+	}
 })
 
 describe('templates', () => {
