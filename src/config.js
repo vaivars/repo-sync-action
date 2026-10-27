@@ -37,7 +37,7 @@ try {
 		GIT_EMAIL: {},
 		GIT_USERNAME: {},
 		CONFIG_PATH: { default: '.github/sync.yml' },
-		IS_FINE_GRAINED: { default: false },
+		IS_FINE_GRAINED: { type: 'boolean', default: false },
 		COMMIT_BODY: { default: '' },
 		COMMIT_PREFIX: { default: '🔄' },
 		COMMIT_EACH_FILE: { type: 'boolean', default: true },

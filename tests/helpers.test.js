@@ -121,6 +121,14 @@ describe('copy with deleteOrphaned', () => {
 })
 
 describe('config', () => {
+	for (const [value, expected] of [[undefined, false], ['false', false], ['true', true]]) {
+		test(`parses IS_FINE_GRAINED ${value} as ${expected}`, async () => {
+			const { context } = await loadConfig('', { IS_FINE_GRAINED: value })
+
+			assert.equal(context.IS_FINE_GRAINED, expected)
+		})
+	}
+
 	test('reads a repo name starting with http as owner/name and still accepts URLs', async () => {
 		const { parseConfig } = await loadConfig(`
 httpie/cli:
