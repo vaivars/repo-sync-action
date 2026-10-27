@@ -475,6 +475,50 @@ describe('Git.getTreeDiff', () => {
 	})
 })
 
+describe('PR body', () => {
+	async function prGit(config = {}) {
+		const requests = []
+		const respond = async (params) => {
+			requests.push(params)
+			return { data: { number: 1, html_url: 'https://github.com/owner/repo/pull/1' } }
+		}
+		const git = await loadGit({ config, octokit: { pulls: { create: respond, update: respond } } })
+		Object.assign(git, {
+			repo: { user: 'owner', name: 'repo' },
+			prBranch: 'repo-sync/source/default',
+			baseBranch: 'main',
+		})
+		return { git, requests }
+	}
+
+	test('keeps the indentation of interpolated content and none of the template', async () => {
+		const { git, requests } = await prGit({ PR_BODY: 'Extra:\n  - indented item' })
+
+		await git.createOrUpdatePr('<details>\n</details>', undefined, 'Body\n    code block')
+
+		const { body } = requests[0]
+		assert.ok(
+			body.startsWith(
+				'Body\n    code block\n\nsynced local file(s) with [owner/source](https://github.com/owner/source).\n\n'
+					+ 'Extra:\n  - indented item\n\n<details>\n</details>\n\n---\n\nThis PR was created',
+			),
+			body,
+		)
+	})
+
+	test('keeps the indentation of the existing body when adding the resync warning', async () => {
+		const { git, requests } = await prGit()
+		git.existingPr = { number: 1, body: 'Line\n  indented' }
+
+		await git.setPrWarning()
+
+		assert.equal(
+			requests[0].body,
+			'⚠️ This PR is being automatically resynced ⚠️\n\nLine\n  indented',
+		)
+	})
+})
+
 describe('templates', () => {
 	test('render values without HTML escaping', async () => {
 		const { write } = await loadHelpers()

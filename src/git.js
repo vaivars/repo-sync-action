@@ -424,11 +424,12 @@ export default class Git {
 			owner: this.repo.user,
 			repo: this.repo.name,
 			pull_number: this.existingPr.number,
-			body: dedent(`
+			// Tagged, so that only the template is dedented and the body keeps its indentation
+			body: dedent`
 				⚠️ This PR is being automatically resynced ⚠️
 
 				${this.existingPr.body}
-			`),
+			`,
 		})
 	}
 
@@ -445,7 +446,9 @@ export default class Git {
 	}
 
 	async createOrUpdatePr(changedFiles, title, description) {
-		const body = dedent(`
+		// Tagged, so that only the template is dedented and the interpolated content keeps its
+		// indentation
+		const body = dedent`
 			${
 			description ? description + '\n\n' : ''
 		}synced local file(s) with [${GITHUB_REPOSITORY}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}).
@@ -459,7 +462,7 @@ export default class Git {
 			This PR was created automatically by the [repo-sync-action](https://github.com/vaivars/repo-sync-action) workflow run [#${
 			process.env.GITHUB_RUN_ID || 0
 		}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID || 0})
-		`)
+		`
 
 		const prTitle = title === undefined
 			? `${COMMIT_PREFIX} synced file(s) with ${GITHUB_REPOSITORY}`
