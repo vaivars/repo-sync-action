@@ -120,6 +120,24 @@ describe('copy with deleteOrphaned', () => {
 	})
 })
 
+describe('config', () => {
+	test('reads a repo name starting with http as owner/name and still accepts URLs', async () => {
+		const { parseConfig } = await loadConfig(`
+httpie/cli:
+  - a.txt
+https://ghe.example.com/owner/repo@main:
+  - b.txt
+`)
+
+		const repos = await parseConfig()
+
+		assert.deepEqual(repos.map(({ repo }) => repo.uniqueName), [
+			'github.com/httpie/cli@default',
+			'ghe.example.com/owner/repo@main',
+		])
+	})
+})
+
 describe('templates', () => {
 	test('render values without HTML escaping', async () => {
 		const { write } = await loadHelpers()

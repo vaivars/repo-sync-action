@@ -78,7 +78,7 @@ try {
 const parseRepoName = (fullRepo) => {
 	let host = new URL(context.GITHUB_SERVER_URL).host
 
-	if (fullRepo.startsWith('http')) {
+	if (/^https?:\/\//.test(fullRepo)) {
 		const url = new URL(fullRepo)
 		host = url.host
 
