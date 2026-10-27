@@ -146,7 +146,7 @@ export async function copy(src, dest, isDirectory, file) {
 		})
 
 		for (const destFile of destFileList) {
-			if (destFile.startsWith('.git')) return
+			if (destFile.startsWith('.git')) continue
 			if (srcFileList.indexOf(destFile) === -1) {
 				const filePath = path.join(dest, destFile)
 				core.debug(`Found an orphaned file in the target repo - ${filePath}`)
