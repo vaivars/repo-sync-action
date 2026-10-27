@@ -51557,6 +51557,12 @@ function arrayEquals(array1, array2) {
 	)
 }
 
+// GitHub's answer when createRef targets a branch that already exists. Octokit
+// appends the docs URL to the message, so match its start, not all of it.
+function isReferenceExistsError(error) {
+	return error.status === 422 && error.message.startsWith('Reference already exists')
+}
+
 // Custom readfiles implementation to replace node-readfiles
 async function readfiles(dir, options = {}) {
 	const files = []
@@ -51942,7 +51948,7 @@ class Git {
 				core_debug(`Created new branch ${this.prBranch}`)
 			} catch (error) {
 				// If the branch exists ignores the error
-				if (error.message !== 'Reference already exists') throw error
+				if (!isReferenceExistsError(error)) throw error
 			}
 		}
 

@@ -196,6 +196,12 @@ export function arrayEquals(array1, array2) {
 	)
 }
 
+// GitHub's answer when createRef targets a branch that already exists. Octokit
+// appends the docs URL to the message, so match its start, not all of it.
+export function isReferenceExistsError(error) {
+	return error.status === 422 && error.message.startsWith('Reference already exists')
+}
+
 // Custom readfiles implementation to replace node-readfiles
 export async function readfiles(dir, options = {}) {
 	const files = []
