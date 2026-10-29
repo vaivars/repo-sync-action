@@ -1,0 +1,142 @@
+import esmock from 'esmock'
+import fs from 'fs-extra'
+import { execFileSync } from 'node:child_process'
+import path from 'node:path'
+import { after } from 'node:test'
+
+export const ROOT_DIR = path.resolve(import.meta.dirname, '..')
+// Templates only render below the working directory, so scratch files live in the repo. Test
+// files run in parallel, each in its own process, so each process gets its own directory
+export const TMP_ROOT = path.join(ROOT_DIR, `.tmp/tests-${process.pid}`)
+
+after(() => fs.remove(TMP_ROOT))
+
+export async function makeTmpDir() {
+	await fs.ensureDir(TMP_ROOT)
+	return fs.mkdtemp(path.join(TMP_ROOT, 'case-'))
+}
+
+export async function writeTree(root, files) {
+	for (const [file, content] of Object.entries(files)) {
+		await fs.outputFile(path.join(root, file), content)
+	}
+}
+
+export function gitIn(cwd, ...args) {
+	return execFileSync('git', [
+		'-c',
+		'user.name=test',
+		'-c',
+		'user.email=test@example.com',
+		'-c',
+		'commit.gpgsign=false',
+		...args,
+	], { cwd, encoding: 'utf8' }).trim()
+}
+
+export const silentCore = {
+	debug: () => {},
+	info: () => {},
+	warning: () => {},
+	setSecret: () => {},
+}
+
+// helpers.js with @actions/core silenced; readdir sorted so that dot entries come first
+export async function loadHelpers() {
+	return esmock('../src/helpers.js', {
+		'@actions/core': silentCore,
+		'fs-extra': { default: { ...fs, readdir: async (dir) => (await fs.readdir(dir)).sort() } },
+	})
+}
+
+// config.js reads its inputs when it is imported, so every call loads a fresh copy of it
+export async function loadConfig(syncYml, inputs = {}) {
+	const dir = await makeTmpDir()
+	const configPath = path.join(dir, 'sync.yml')
+	await fs.writeFile(configPath, syncYml)
+
+	for (const key of Object.keys(process.env)) {
+		if (key.startsWith('INPUT_')) delete process.env[key]
+	}
+	const env = {
+		GH_PAT: 'test-token',
+		GITHUB_REPOSITORY: 'owner/source',
+		CONFIG_PATH: configPath,
+		TMP_DIR: path.join(dir, 'work'),
+		...inputs,
+	}
+	for (const [key, value] of Object.entries(env)) {
+		if (value !== undefined) process.env[`INPUT_${key}`] = value
+	}
+	process.env.GITHUB_SERVER_URL = 'https://github.com'
+
+	const warnings = []
+	const config = await esmock('../src/config.js', {
+		'@actions/core': { ...silentCore, warning: (message) => warnings.push(message) },
+	})
+	return { context: config.default, parseConfig: config.parseConfig, warnings }
+}
+
+const GIT_CONFIG = {
+	GITHUB_TOKEN: 'test-token',
+	GITHUB_SERVER_URL: 'https://github.com',
+	IS_INSTALLATION_TOKEN: false,
+	IS_FINE_GRAINED: false,
+	GIT_USERNAME: undefined,
+	GIT_EMAIL: undefined,
+	TMP_DIR: 'tmp',
+	COMMIT_BODY: '',
+	COMMIT_PREFIX: '🔄',
+	GITHUB_REPOSITORY: 'owner/source',
+	OVERWRITE_EXISTING_PR: true,
+	SKIP_PR: false,
+	PR_BODY: '',
+	BRANCH_PREFIX: 'repo-sync/SOURCE_REPO_NAME',
+	FORK: false,
+}
+
+// A Git instance with a fixed config, a fake Octokit and `core` for @actions/core. With
+// `commands`, the programs it runs are recorded there as { file, args, env }. They are run only
+// with `run`, otherwise they print what `outputs` has for their arguments. Branch names are always
+// checked by the real git check-ref-format
+export async function loadGit(
+	{ config = {}, octokit = {}, core = silentCore, commands, outputs = {}, run = false } = {},
+) {
+	const helpers = await esmock('../src/helpers.js', { '@actions/core': core })
+	const mocks = {
+		'../src/config.js': { default: { ...GIT_CONFIG, ...config } },
+		'@actions/github': { getOctokit: () => ({ rest: octokit }), context: {} },
+		'../src/helpers.js': helpers,
+	}
+	if (commands) {
+		const printed = { 'rev-parse --abbrev-ref HEAD': 'main', ...outputs }
+		mocks['../src/helpers.js'] = {
+			...helpers,
+			execFile: async (file, args, workingDir, options = {}) => {
+				if (args[0] !== 'check-ref-format') commands.push({ file, args, env: options.env })
+				if (run || args[0] === 'check-ref-format') {
+					return helpers.execFile(file, args, workingDir, options)
+				}
+				return printed[args.join(' ')] ?? ''
+			},
+		}
+	}
+	const { default: Git } = await esmock.strict('../src/git.js', mocks, { '@actions/core': core })
+	return new Git()
+}
+
+// A Git instance whose fake Octokit records the parameters of every PR it creates or updates
+export async function prGit(config = {}) {
+	const requests = []
+	const respond = async (params) => {
+		requests.push(params)
+		return { data: { number: 1, html_url: 'https://github.com/owner/repo/pull/1' } }
+	}
+	const git = await loadGit({ config, octokit: { pulls: { create: respond, update: respond } } })
+	Object.assign(git, {
+		repo: { user: 'owner', name: 'repo' },
+		prBranch: 'repo-sync/source/default',
+		baseBranch: 'main',
+	})
+	return { git, requests }
+}

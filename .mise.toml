@@ -32,8 +32,7 @@ run = [
 depends = ["build"]
 description = "Run the unit tests and the local integration test with mocked git"
 run = [
-    "node --test tests/helpers.test.js",
-    "node tests/local-sync.test.js",
+    "node --test 'tests/*.test.js'",
 ]
 
 [tasks.ci]
