@@ -5,8 +5,8 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "lint": "eslint ./src",
-    "lint:fix": "eslint ./src --fix",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "start": "node src/index.js",
     "build": "ncc build src/index.js -o dist --license licenses.txt",
     "build:check": "npm run build && git diff --exit-code dist/"

@@ -11,7 +11,7 @@ group:
       - source: .github/workflows/test.yml
         dest: .github/workflows/test.yml
     repos: backend
-  
+
   - files:
       - source: LICENSE
         dest: LICENSE
