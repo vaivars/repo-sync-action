@@ -16,6 +16,7 @@ import { createOctokit, GitHub } from './github.ts'
 import type { ExistingPr, PullRequest, RepoSession } from './github.ts'
 import { execFile, execFileBuffer } from './helpers.ts'
 import type { ExecOptions } from './helpers.ts'
+import { commitMessage, defaultSyncMessage } from './messages.ts'
 import { prBranchName } from './pull-request.ts'
 import type { ChangedFiles } from './pull-request.ts'
 
@@ -67,7 +68,7 @@ export default class Git implements RepoSession {
 		this.github = new GitHub(createOctokit(GITHUB_TOKEN).rest, this, {
 			fork: FORK,
 			skipPr: SKIP_PR,
-			defaultTitle: `${COMMIT_PREFIX} synced file(s) with ${GITHUB_REPOSITORY}`,
+			defaultTitle: defaultSyncMessage(COMMIT_PREFIX, GITHUB_REPOSITORY),
 			body: { sourceRepository: GITHUB_REPOSITORY, serverUrl: GITHUB_SERVER_URL, prBody: PR_BODY },
 		})
 
@@ -231,12 +232,11 @@ export default class Git implements RepoSession {
 	}
 
 	async commit(msg?: string): Promise<string> {
-		let message = msg !== undefined
-			? msg
-			: `${COMMIT_PREFIX} synced file(s) with ${GITHUB_REPOSITORY}`
-		if (COMMIT_BODY) {
-			message += `\n\n${COMMIT_BODY}`
-		}
+		const message = commitMessage(
+			msg,
+			defaultSyncMessage(COMMIT_PREFIX, GITHUB_REPOSITORY),
+			COMMIT_BODY,
+		)
 		return this.exec(['commit', '-m', message])
 	}
 

@@ -68,7 +68,7 @@ describe('run', () => {
 				remove: async () => {},
 			},
 			fs: { existsSync: () => true },
-		}, {
+			// Not a global mock, which would keep Node from stripping the types of the modules below
 			'@actions/core': {
 				...silentCore,
 				notice: () => {},

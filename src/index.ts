@@ -1,8 +1,8 @@
 import * as core from '@actions/core'
 import * as fs from 'fs'
-import * as path from 'path'
 import { pathToFileURL } from 'url'
 
+import { changedFiles } from './changes.ts'
 import Git from './git.ts'
 import type { ExistingPr } from './github.ts'
 import {
@@ -14,6 +14,7 @@ import {
 	remove,
 	setTmpDir,
 } from './helpers.ts'
+import { fileCommitMessage, originalMessageOf, prDescription, prTitle } from './messages.ts'
 
 import { default as config, parseConfig } from './config.ts'
 import type { FileEntry, SyncTarget } from './config.ts'
@@ -110,16 +111,8 @@ async function processRepository(item: SyncTarget, git: Git, prUrls: string[]): 
 		}
 
 		const hasChanges = await git.hasChanges()
-		const useOriginalMessage = ORIGINAL_MESSAGE && git.isOneCommitPush()
-		const originalMessage = useOriginalMessage
-			? git.originalCommitMessage()
-			: undefined
-		const firstLineBreakIndex = originalMessage
-			? originalMessage.indexOf('\n')
-			: -1
-		const prBody = useOriginalMessage && firstLineBreakIndex !== -1
-			? originalMessage!.substring(firstLineBreakIndex + 1).trim()
-			: undefined
+		const originalMessage = originalMessageOf(ORIGINAL_MESSAGE, git)
+		const prBody = prDescription(originalMessage)
 
 		if (hasChanges === false && modified.length < 1) {
 			core.info('File(s) already up to date')
@@ -132,11 +125,11 @@ async function processRepository(item: SyncTarget, git: Git, prUrls: string[]): 
 		if (hasChanges === true) {
 			core.debug(`Creating commit for remaining files`)
 
-			const commitMessage = useOriginalMessage ? originalMessage : undefined
-			await git.commit(commitMessage)
+			// The original message, or Git's default without one
+			await git.commit(originalMessage)
 			modified.push({
 				dest: git.workingDir,
-				commitMessage: commitMessage,
+				commitMessage: originalMessage,
 			})
 		}
 
@@ -145,18 +138,13 @@ async function processRepository(item: SyncTarget, git: Git, prUrls: string[]): 
 
 		if (SKIP_PR === false) {
 			// Only the per-file commits have a file list
-			const changedFiles = modified.filter((file): file is ChangedFiles & SyncCommit =>
+			const fileCommits = modified.filter((file): file is ChangedFiles & SyncCommit =>
 				file.files !== undefined
 			)
 
-			const useCommitAsPRTitle = COMMIT_AS_PR_TITLE && useOriginalMessage
-			const prTitle = useCommitAsPRTitle
-				? originalMessage!.split('\n', 1)[0].trim()
-				: undefined
-
 			const pullRequest = await git.createOrUpdatePr(
-				COMMIT_EACH_FILE ? changedFiles : [],
-				prTitle,
+				COMMIT_EACH_FILE ? fileCommits : [],
+				prTitle(originalMessage, COMMIT_AS_PR_TITLE),
 				prBody,
 			)
 
@@ -243,9 +231,6 @@ async function syncFile(file: FileEntry, git: Git, modified: SyncCommit[]): Prom
 
 		core.debug(`Creating commit for file(s) ${file.dest}`)
 
-		// Use different commit/pr message based on if the source is a directory or file
-		const directory = isDirectory ? 'directory' : 'file'
-
 		const syncedFiles = await getSyncedFileList(
 			file.source,
 			file.dest,
@@ -253,45 +238,26 @@ async function syncFile(file: FileEntry, git: Git, modified: SyncCommit[]): Prom
 			file,
 		)
 		const fileStatuses = await git.getFileStatuses()
+		const { header, files } = changedFiles(
+			{ source: file.source, dest: file.dest, isDirectory },
+			syncedFiles,
+			fileStatuses,
+		)
 
-		const details = syncedFiles.map((filePath) => {
-			const mode = fileStatuses[filePath] || ''
-			let statusText = 'unchanged'
-			if (mode.includes('A') || mode.includes('?')) statusText = 'created'
-			if (mode.includes('M')) statusText = 'updated'
-			if (mode.includes('D')) statusText = 'deleted'
-
-			const relPath = isDirectory
-				? path.relative(file.dest, filePath)
-				: path.basename(filePath)
-			return `\`${relPath}\` - ${statusText}`
+		const commitMessage = fileCommitMessage(originalMessageOf(ORIGINAL_MESSAGE, git), {
+			prefix: COMMIT_PREFIX,
+			source: file.source,
+			dest: file.dest,
+			destExists,
 		})
 
-		const useOriginalMessage = ORIGINAL_MESSAGE && git.isOneCommitPush()
-		const originalMessage = useOriginalMessage ? git.originalCommitMessage() : undefined
-
-		const message = {
-			true: {
-				commit: useOriginalMessage
-					? originalMessage!
-					: `${COMMIT_PREFIX} synced local '${file.dest}' with remote '${file.source}'`,
-			},
-			false: {
-				commit: useOriginalMessage
-					? originalMessage!
-					: `${COMMIT_PREFIX} created local '${file.dest}' from remote '${file.source}'`,
-			},
-		}
-
-		const { commit } = destExists ? message.true : message.false
-		await git.commit(commit)
+		await git.commit(commitMessage)
 		modified.push({
 			dest: file.dest,
 			source: file.source,
-			// The PR body lists these, see formatChangedFiles
-			header: `From remote ${directory} <code>${file.source}</code>, synced the following files:`,
-			files: details,
-			commitMessage: commit,
+			header,
+			files,
+			commitMessage,
 		})
 	}
 }
