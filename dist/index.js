@@ -50496,38 +50496,39 @@ function dedent(templateStrings, ...values) {
 	return string
 }
 
-function execCmd(command, workingDir, trimResult = true) {
-	core_debug(`EXEC: "${command}" IN ${workingDir}`)
-	return new Promise((resolve, reject) => {
-		;(0,external_child_process_.exec)(
-			command,
-			{
-				cwd: workingDir,
-				maxBuffer: 1024 * 1024 * 4,
-			},
-			function(error, stdout) {
-				error ? reject(error) : resolve(trimResult ? stdout.trim() : stdout)
-			},
-		)
-	})
-}
-
-// Runs a program without a shell and resolves with its stdout as raw bytes, with no size limit
-function execFileBuffer(file, args, workingDir) {
+// Runs a program without a shell, so that each argument reaches it as one literal value
+function runFile(file, args, workingDir, options) {
 	core_debug(`EXEC: "${file} ${args.join(' ')}" IN ${workingDir}`)
 	return new Promise((resolve, reject) => {
-		;(0,external_child_process_.execFile)(
+		external_child_process_.execFile(
 			file,
 			args,
 			{
 				cwd: workingDir,
-				encoding: 'buffer',
-				maxBuffer: Infinity,
+				...options,
 			},
 			function(error, stdout) {
 				error ? reject(error) : resolve(stdout)
 			},
 		)
+	})
+}
+
+// Runs a program without a shell and resolves with its stdout as text, trimmed unless trimResult
+// is false. The variables in env are added to the program's environment
+async function execFile(file, args, workingDir, { trimResult = true, env } = {}) {
+	const stdout = await runFile(file, args, workingDir, {
+		maxBuffer: 1024 * 1024 * 4,
+		env: env === undefined ? undefined : { ...process.env, ...env },
+	})
+	return trimResult ? stdout.trim() : stdout
+}
+
+// Runs a program without a shell and resolves with its stdout as raw bytes, with no size limit
+function execFileBuffer(file, args, workingDir) {
+	return runFile(file, args, workingDir, {
+		encoding: 'buffer',
+		maxBuffer: Infinity,
 	})
 }
 
@@ -50756,6 +50757,27 @@ const {
 // setPrWarning puts this on top of an existing PR body while it is being resynced
 const PR_WARNING = '⚠️ This PR is being automatically resynced ⚠️'
 
+// The environment that authenticates git's HTTPS requests. git reads http.extraHeader from it
+// (git 2.31 or newer), so the token is neither in argv nor in a remote URL, which git would store
+// in the clone's .git/config. Unlike a GIT_ASKPASS helper, it needs no script on disk, and the
+// token never goes through git's credential helpers, which could store it
+function authEnv() {
+	// The user:password pairs of the https://<credentials>@host URLs used before. A bare token was
+	// the user name with an empty password
+	const credentials = `${IS_INSTALLATION_TOKEN ? 'x-access-token:' : ''}${
+		IS_FINE_GRAINED ? 'oauth:' : ''
+	}${GITHUB_TOKEN}`
+	const basic = Buffer.from(credentials.includes(':') ? credentials : `${credentials}:`)
+		.toString('base64')
+	core_setSecret(basic)
+
+	return {
+		GIT_CONFIG_COUNT: '1',
+		GIT_CONFIG_KEY_0: 'http.extraHeader',
+		GIT_CONFIG_VALUE_0: `Authorization: Basic ${basic}`,
+	}
+}
+
 class Git {
 	constructor() {
 		const octokit = getOctokit(
@@ -50782,6 +50804,35 @@ class Git {
 
 		// We only need the rest client
 		this.github = octokit.rest
+
+		this.authEnv = authEnv()
+	}
+
+	// Runs git in the clone. Values from sync.yml and the inputs are passed as separate arguments,
+	// never through a shell
+	exec(args, options) {
+		return execFile('git', args, this.workingDir, options)
+	}
+
+	// Runs a git command that talks to the server, with the credentials in its environment
+	execRemote(args) {
+		return this.exec(args, { env: this.authEnv })
+	}
+
+	// Fails the repository unless name is a branch name that git takes as it is. git would read one
+	// that starts with - as an option, and check-ref-format prints something else for @{-1}
+	async checkBranchName(name, description) {
+		const valid = !name.startsWith('-')
+			&& await execFile('git', ['check-ref-format', '--branch', name]).then(
+				(output) => output === name,
+				() => false,
+			)
+		if (!valid) {
+			const quoted = JSON.stringify(name)
+			throw new Error(
+				`The ${description} ${quoted} of ${this.repo.fullName} is not a valid branch name`,
+			)
+		}
 	}
 
 	async initRepo(repo) {
@@ -50793,10 +50844,12 @@ class Git {
 		// Set values to current repo
 		this.repo = repo
 		this.workingDir = external_path_.join(TMP_DIR, repo.uniqueName)
-		const credentials = `${IS_INSTALLATION_TOKEN ? 'x-access-token:' : ''}${
-			IS_FINE_GRAINED ? 'oauth:' : ''
-		}${GITHUB_TOKEN}`
-		this.gitUrl = `https://${credentials}@${repo.fullName}.git`
+		// No credentials in it, see authEnv
+		this.gitUrl = `https://${repo.fullName}.git`
+
+		if (repo.branch !== 'default') {
+			await this.checkBranchName(repo.branch, 'branch')
+		}
 
 		await this.clone()
 		await this.setIdentity()
@@ -50804,7 +50857,8 @@ class Git {
 		await this.getLastCommitSha()
 
 		if (FORK) {
-			const forkUrl = `https://${credentials}@${repo.host}/${FORK}/${repo.name}.git`
+			// On the repo's host, so the push to it gets the same credentials
+			const forkUrl = `https://${repo.host}/${FORK}/${repo.name}.git`
 			await this.createFork()
 			await this.createRemote(forkUrl)
 		}
@@ -50821,16 +50875,19 @@ class Git {
 	}
 
 	async createRemote(forkUrl) {
-		return execCmd(`git remote add fork ${forkUrl}`, this.workingDir)
+		return this.exec(['remote', 'add', 'fork', forkUrl])
 	}
 
 	async clone() {
 		core_debug(`Cloning ${this.repo.fullName} into ${this.workingDir}`)
 
-		return execCmd(
-			`git clone --depth 1 ${
-				this.repo.branch !== 'default' ? '--branch "' + this.repo.branch + '"' : ''
-			} ${this.gitUrl} ${this.workingDir}`,
+		const branch = this.repo.branch !== 'default' ? ['--branch', this.repo.branch] : []
+		// Runs where the action runs, since the clone does not exist yet
+		return execFile(
+			'git',
+			['clone', '--depth', '1', ...branch, '--', this.gitUrl, this.workingDir],
+			undefined,
+			{ env: this.authEnv },
 		)
 	}
 
@@ -50853,17 +50910,13 @@ class Git {
 
 		core_debug(`Setting git user to email: ${email}, username: ${username}`)
 
-		return execCmd(
-			`git config --local user.name "${username}" && git config --local user.email "${email}"`,
-			this.workingDir,
-		)
+		await this.exec(['config', '--local', 'user.name', username])
+		await this.exec(['config', '--local', 'user.email', email])
 	}
 
 	async getBaseBranch() {
-		this.baseBranch = await execCmd(
-			`git rev-parse --abbrev-ref HEAD`,
-			this.workingDir,
-		)
+		this.baseBranch = await this.exec(['rev-parse', '--abbrev-ref', 'HEAD'])
+		await this.checkBranchName(this.baseBranch, 'base branch')
 	}
 
 	async createPrBranch() {
@@ -50880,15 +50933,18 @@ class Git {
 			newBranch += `-${Math.round(new Date().getTime() / 1000)}`
 		}
 
+		await this.checkBranchName(newBranch, 'PR branch')
+
 		core_debug(`Creating PR Branch ${newBranch}`)
 
-		await execCmd(`git checkout -b "${newBranch}"`, this.workingDir)
+		await this.exec(['checkout', '-b', newBranch])
 
 		this.prBranch = newBranch
 	}
 
 	async add(file) {
-		return execCmd(`git add -f "${file}"`, this.workingDir)
+		// After --, a dest starting with - is still a path
+		return this.exec(['add', '-f', '--', file])
 	}
 
 	isOneCommitPush() {
@@ -50950,23 +51006,17 @@ class Git {
 	}
 
 	async getLastCommitSha() {
-		this.lastCommitSha = await execCmd(`git rev-parse HEAD`, this.workingDir)
+		this.lastCommitSha = await this.exec(['rev-parse', 'HEAD'])
 	}
 
 	async changes(destination) {
 		// gets array of git diffs for the destination, which either can be a file or a dict
-		const output = await execCmd(
-			`git diff HEAD ${destination}`,
-			this.workingDir,
-		)
+		const output = await this.exec(['diff', 'HEAD', '--', destination])
 		return Object.values(this.parseGitDiffOutput(output))
 	}
 
 	async getFileStatuses() {
-		const statusOutput = await execCmd(
-			`git status --porcelain`,
-			this.workingDir,
-		)
+		const statusOutput = await this.exec(['status', '--porcelain'])
 		return (0,porcelain.parse)(statusOutput).reduce((acc, entry) => {
 			acc[entry.name] = entry.mode
 			return acc
@@ -50974,10 +51024,7 @@ class Git {
 	}
 
 	async hasChanges() {
-		const statusOutput = await execCmd(
-			`git status --porcelain`,
-			this.workingDir,
-		)
+		const statusOutput = await this.exec(['status', '--porcelain'])
 
 		return (0,porcelain.parse)(statusOutput).length !== 0
 	}
@@ -50989,18 +51036,13 @@ class Git {
 		if (COMMIT_BODY) {
 			message += `\n\n${COMMIT_BODY}`
 		}
-		return execCmd(
-			`git commit -m '${message.replace(/'/g, "'\\''")}'`,
-			this.workingDir,
-		)
+		return this.exec(['commit', '-m', message])
 	}
 
 	// Returns a git tree parsed for the specified commit sha
 	async getTreeId(commitSha) {
 		core_debug(`Getting treeId for commit ${commitSha}`)
-		const output = (
-			await execCmd(`git cat-file -p ${commitSha}`, this.workingDir)
-		).split('\n')
+		const output = (await this.exec(['cat-file', '-p', commitSha])).split('\n')
 
 		const commitHeaders = output.slice(
 			0,
@@ -51015,11 +51057,9 @@ class Git {
 
 	async getTreeDiff(referenceTreeId, differenceTreeId) {
 		// -z prints paths verbatim, so they are not quoted and can contain spaces
-		const output = await execCmd(
-			`git diff-tree -z -r ${referenceTreeId} ${differenceTreeId}`,
-			this.workingDir,
-			false,
-		)
+		const output = await this.exec(['diff-tree', '-z', '-r', referenceTreeId, differenceTreeId], {
+			trimResult: false,
+		})
 
 		// Each entry is ":<mode> <mode> <blob> <blob> <change>" NUL "<path>" NUL
 		const fields = output.split('\0')
@@ -51060,20 +51100,19 @@ class Git {
 
 	// Gets the commit list in chronological order
 	async getCommitsToPush() {
-		const output = await execCmd(
-			`git log --format=%H --reverse ${SKIP_PR === false ? `` : `origin/`}${this.baseBranch}..HEAD`,
-			this.workingDir,
-		)
+		const output = await this.exec([
+			'log',
+			'--format=%H',
+			'--reverse',
+			`${SKIP_PR === false ? `` : `origin/`}${this.baseBranch}..HEAD`,
+		])
 
 		const commits = output.split('\n')
 		return commits
 	}
 
 	async getCommitMessage(commitSha) {
-		return await execCmd(
-			`git log -1 --format=%B ${commitSha}`,
-			this.workingDir,
-		)
+		return await this.exec(['log', '-1', '--format=%B', commitSha])
 	}
 
 	// A wrapper for running all the flow to generate all the pending commits using the GitHub API
@@ -51118,21 +51157,18 @@ class Git {
 	}
 
 	async status() {
-		return execCmd(`git status`, this.workingDir)
+		return this.exec(['status'])
 	}
 
 	async push() {
 		if (FORK) {
-			return execCmd(
-				`git push -u fork ${this.prBranch} --force`,
-				this.workingDir,
-			)
+			return this.execRemote(['push', '-u', 'fork', this.prBranch, '--force'])
 		}
 		if (IS_INSTALLATION_TOKEN) {
 			return await this.createGithubVerifiedCommits()
 		}
 		// With SKIP_PR the commits go straight onto the base branch, which must not be force pushed
-		return execCmd(`git push ${this.gitUrl}${SKIP_PR === false ? ' --force' : ''}`, this.workingDir)
+		return this.execRemote(['push', this.gitUrl, ...(SKIP_PR === false ? ['--force'] : [])])
 	}
 
 	async findExistingPr() {
