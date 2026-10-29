@@ -237,6 +237,14 @@ describe('run with real files and git', () => {
 		// One per entry with changes
 		assert.equal(commits, 3)
 	})
+
+	test('lists what each entry changes without COMMIT_EACH_FILE', async () => {
+		const { source, body, commits } = await syncFiles(false)
+
+		assert.ok(body.includes(`\n\n${changedFilesList(source)}\n\n---\n\n`), body)
+		// One for everything
+		assert.equal(commits, 1)
+	})
 })
 
 describe('run with a repository that fails', () => {

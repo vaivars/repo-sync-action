@@ -142,7 +142,7 @@ async function processRepository(item: SyncTarget, git: Git, prUrls: string[]): 
 
 		if (SKIP_PR === false) {
 			const pullRequest = await git.createOrUpdatePr(
-				COMMIT_EACH_FILE ? entryChanges : [],
+				entryChanges,
 				prTitle(originalMessage, COMMIT_AS_PR_TITLE),
 				prBody,
 			)
@@ -224,6 +224,11 @@ async function syncFile(
 
 	await git.add(file.dest)
 
+	// What the PR body lists for the entry, read before a commit takes it out of the index. Without
+	// COMMIT_EACH_FILE the changes of all entries stay staged, so only those below dest are read
+	const changes = await stagedChangesOf(file, isDirectory, git)
+	if (changes) entryChanges.push(changes)
+
 	// Commit each file separately, if option is set to false commit all files at once later
 	if (COMMIT_EACH_FILE === true) {
 		const hasChanges = await git.hasChanges()
@@ -233,9 +238,6 @@ async function syncFile(
 		}
 
 		core.debug(`Creating commit for file(s) ${file.dest}`)
-
-		// Read before the commit, which takes them out of the index
-		const changes = await stagedChangesOf(file, isDirectory, git)
 
 		const commitMessage = fileCommitMessage(originalMessageOf(ORIGINAL_MESSAGE, git), {
 			prefix: COMMIT_PREFIX,
@@ -250,12 +252,12 @@ async function syncFile(
 			source: file.source,
 			commitMessage,
 		})
-		if (changes) entryChanges.push(changes)
 	}
 }
 
-// What the PR body lists for an entry: the changes it staged below its dest, unless there are none.
-// An entry whose dest overlaps another's can list some of the same files
+// What the PR body lists for an entry: the changes staged below its dest, unless there are none.
+// dest is a pathspec, so when the dests of two entries overlap, a file below both of them can be
+// listed under each
 async function stagedChangesOf(
 	file: FileEntry,
 	isDirectory: boolean,

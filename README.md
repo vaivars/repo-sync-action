@@ -206,7 +206,8 @@ For each target repository the action:
    into one commit, `🔄 synced file(s) with <owner>/<source-repo>`.
 3. Opens a pull request titled `🔄 synced file(s) with <owner>/<source-repo>` and labelled `sync`.
    If a sync pull request from an earlier run is still open, it's updated instead. Set
-   `OVERWRITE_EXISTING_PR: false` to open a new one each run.
+   `OVERWRITE_EXISTING_PR: false` to open a new one each run. The pull request lists the files that
+   each file entry creates, updates, deletes or renames.
 
 Alternatives to this flow:
 
