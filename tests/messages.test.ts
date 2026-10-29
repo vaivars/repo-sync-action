@@ -92,7 +92,12 @@ describe('prTitle', () => {
 	test('is the trimmed first line of the original message with COMMIT_AS_PR_TITLE', () => {
 		assert.equal(prTitle('  Title  \nBody', true), 'Title')
 		assert.equal(prTitle('Single line', true), 'Single line')
-		assert.equal(prTitle('', true), '')
+	})
+
+	test('is undefined, for the default title, when the first line is empty', () => {
+		for (const message of ['', '\nBody', ' \t \nBody', '   ']) {
+			assert.equal(prTitle(message, true), undefined, JSON.stringify(message))
+		}
 	})
 
 	test('is undefined without COMMIT_AS_PR_TITLE or an original message', () => {

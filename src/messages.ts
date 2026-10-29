@@ -51,14 +51,15 @@ export function fileCommitMessage(
 		: `${prefix} created local '${dest}' from remote '${source}'`
 }
 
-// The PR title that COMMIT_AS_PR_TITLE takes from the original message: its first line
+// The PR title that COMMIT_AS_PR_TITLE takes from the original message: its first line. Undefined,
+// which gets the PR the default title, when that line is empty
 export function prTitle(
 	original: string | undefined,
 	commitAsPrTitle: boolean,
 ): string | undefined {
-	return commitAsPrTitle && original !== undefined
-		? original.split('\n', 1)[0].trim()
-		: undefined
+	if (!commitAsPrTitle || original === undefined) return undefined
+
+	return original.split('\n', 1)[0].trim() || undefined
 }
 
 // The PR description taken from the original message: what follows its first line
