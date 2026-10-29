@@ -94,12 +94,10 @@ export function parseStatus(statusOutput: string): StatusEntry[] {
 	return entries
 }
 
-// The git status --porcelain -z status letters of each changed file, by its path
-export function parseFileStatuses(statusOutput: string): Record<string, string> {
-	return parseStatus(statusOutput).reduce((acc: Record<string, string>, entry) => {
-		acc[entry.path] = entry.status
-		return acc
-	}, {})
+// The git status --porcelain -z status letters of each changed file, by its path. A Map, so that a
+// path like constructor or __proto__ is a key like any other
+export function parseFileStatuses(statusOutput: string): Map<string, string> {
+	return new Map(parseStatus(statusOutput).map(({ path, status }) => [path, status]))
 }
 
 // Whether git status --porcelain -z lists any changes

@@ -231,7 +231,10 @@ const parseFiles = (files: unknown, target: string): FileEntry[] => {
 
 // The repo names of a repos value. The entries of a list are not checked, they pass through as
 // YAML has them
-const resolveRepoList = (reposValue: unknown, repoGroups: Record<string, unknown>): string[] => {
+export const resolveRepoList = (
+	reposValue: unknown,
+	repoGroups: Record<string, unknown>,
+): string[] => {
 	// If reposValue is already an array, return it as-is
 	if (Array.isArray(reposValue)) {
 		return reposValue as string[]
@@ -242,7 +245,12 @@ const resolveRepoList = (reposValue: unknown, repoGroups: Record<string, unknown
 		const trimmedValue = reposValue.trim()
 
 		// Check if this is a group reference (no newlines, matches a group name)
-		if (!trimmedValue.includes('\n') && repoGroups[trimmedValue]) {
+		// Only the groups sync.yml defines, not the properties every object inherits
+		if (
+			!trimmedValue.includes('\n')
+			&& Object.hasOwn(repoGroups, trimmedValue)
+			&& repoGroups[trimmedValue]
+		) {
 			core.debug(`Resolving repo group reference: ${trimmedValue}`)
 			const groupRepos = repoGroups[trimmedValue]
 
@@ -267,7 +275,7 @@ const resolveRepoList = (reposValue: unknown, repoGroups: Record<string, unknown
 			.filter((n) => n)
 
 		return entries.flatMap((entry) => {
-			if (repoGroups[entry] && Array.isArray(repoGroups[entry])) {
+			if (Object.hasOwn(repoGroups, entry) && Array.isArray(repoGroups[entry])) {
 				core.debug(`Resolving repo group reference: ${entry}`)
 				return repoGroups[entry] as string[]
 			}

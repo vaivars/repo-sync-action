@@ -16,13 +16,13 @@ export function statusText(mode: string): string {
 export function changedFiles(
 	{ source, dest, isDirectory }: { source: string; dest: string; isDirectory: boolean },
 	syncedFiles: string[],
-	fileStatuses: Record<string, string>,
+	fileStatuses: ReadonlyMap<string, string>,
 ): ChangedFiles {
 	// Use different commit/pr message based on if the source is a directory or file
 	const directory = isDirectory ? 'directory' : 'file'
 
 	const files = syncedFiles.map((filePath) => {
-		const mode = fileStatuses[filePath] || ''
+		const mode = fileStatuses.get(filePath) || ''
 
 		const relPath = isDirectory
 			? path.relative(dest, filePath)

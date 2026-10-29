@@ -83,6 +83,7 @@ export async function loadConfig(
 ): Promise<{
 	context: Config & Record<string, unknown>
 	parseConfig: typeof import('../src/config.ts').parseConfig
+	resolveRepoList: typeof import('../src/config.ts').resolveRepoList
 	warnings: string[]
 }> {
 	const dir = await makeTmpDir()
@@ -108,7 +109,12 @@ export async function loadConfig(
 	const config = await esmock<typeof import('../src/config.ts')>('../src/config.ts', {
 		'@actions/core': { ...silentCore, warning: (message: string) => warnings.push(message) },
 	})
-	return { context: config.default, parseConfig: config.parseConfig, warnings }
+	return {
+		context: config.default,
+		parseConfig: config.parseConfig,
+		resolveRepoList: config.resolveRepoList,
+		warnings,
+	}
 }
 
 const GIT_CONFIG = {

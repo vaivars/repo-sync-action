@@ -177,6 +177,24 @@ group:
 	})
 })
 
+describe('repo group names', () => {
+	test('match only the groups that sync.yml defines, also when named like Object properties', async () => {
+		const { resolveRepoList, warnings } = await loadConfig('')
+		const groups = { constructor: ['user/a'], main: ['user/b'] }
+
+		assert.deepEqual(resolveRepoList('constructor', groups), ['user/a'])
+		for (const name of ['toString', '__proto__', 'hasOwnProperty']) {
+			assert.deepEqual(resolveRepoList(name, groups), [name])
+		}
+		assert.deepEqual(resolveRepoList('valueOf\nconstructor\nmain', groups), [
+			'valueOf',
+			'user/a',
+			'user/b',
+		])
+		assert.deepEqual(warnings, [])
+	})
+})
+
 describe('action.yml', () => {
 	// Inputs whose default depends on the token or the runner, or that have none
 	const WITHOUT_DEFAULT = [

@@ -18,7 +18,7 @@ describe('run', () => {
 			commit: async () => {},
 			push: async () => {},
 			isOneCommitPush: () => false,
-			getFileStatuses: async () => ({}),
+			getFileStatuses: async () => new Map(),
 			// Changes for the synced directory, then nothing left for the final commit
 			hasChanges: async () => ++statusChecks === 1,
 			workingDir: 'work',

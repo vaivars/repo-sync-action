@@ -93,13 +93,16 @@ describe('git status --porcelain -z', () => {
 		+ 'A   leading space.txt\0'
 
 	test('maps each path to its status letters', () => {
-		assert.deepEqual(parseFileStatuses(output), {
-			'a.txt': ' M',
-			'new file.txt': '??',
-			'ünï\ncödé.txt': 'D ',
-			'renamed.txt': 'R ',
-			' leading space.txt': 'A ',
-		})
+		assert.deepEqual(
+			parseFileStatuses(output),
+			new Map([
+				['a.txt', ' M'],
+				['new file.txt', '??'],
+				['ünï\ncödé.txt', 'D '],
+				['renamed.txt', 'R '],
+				[' leading space.txt', 'A '],
+			]),
+		)
 	})
 
 	test('has changes when it lists any file', () => {
