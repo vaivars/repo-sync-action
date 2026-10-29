@@ -1,0 +1,9 @@
+# Used by the dry-run job in .github/workflows/ci.yml, which runs the action against this repository
+vaivars/repo-sync-action@main:
+  - source: .github/e2e/files/
+    dest: e2e/
+    template:
+      name: e2e
+      items: [a, b]
+    exclude: |
+      skip.txt

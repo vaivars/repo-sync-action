@@ -1,33 +1,103 @@
-name: Lint/Build/Test
+name: CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
-    name: Test
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
-      - run: mise run test-ci
-
-      # Separate step so only the workflow linters see the token, which zizmor uses for its online audits
+      - run: npm ci
+      - run: mise run format:check
+      - run: mise run lint
+      # Only this step gets the token, which zizmor uses for its online audits
       - name: Lint workflows
         run: mise run lint:actions
         env:
           GH_TOKEN: ${{ github.token }}
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      - run: npm ci
+      - run: mise run test
+
+  check-dist:
+    name: Check dist
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      - run: npm ci
+      # The action runs the committed dist/, so it has to match a fresh build of src/
+      - id: build
+        run: npm run build:check
+      - name: Upload the expected dist
+        if: failure() && steps.build.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+
+  dry-run:
+    name: Dry run
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Runs this commit's dist/ the way users do, syncing .github/e2e/ into a clone of this repository.
+      # actionlint doesn't support the $/ self-repository syntax yet
+      - uses: ./ # zizmor: ignore[self-repository]
+        with:
+          GH_INSTALLATION_TOKEN: ${{ github.token }}
+          CONFIG_PATH: .github/e2e/sync.yml
+          TMP_DIR: ${{ runner.temp }}/repo-sync
+          DRY_RUN: true
+          SKIP_CLEANUP: true
+      - name: Check the synced clone
+        run: |
+          clone="$RUNNER_TEMP/repo-sync/github.com/vaivars/repo-sync-action@main"
+          test "$(cat "$clone/e2e/hello.txt")" = 'Hello e2e'
+          test "$(cat "$clone/e2e/nested/list.txt")" = 'a,b'
+          test ! -e "$clone/e2e/skip.txt"
+          git -C "$clone" log -1 --format=%s | grep -F "'e2e/'"
+          if grep -Eqi 'authorization|x-access-token' "$clone/.git/config"; then
+            echo '::error::The clone stores credentials in .git/config'
+            exit 1
+          fi

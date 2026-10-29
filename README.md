@@ -326,6 +326,7 @@ mise run lint:actions  # actionlint and zizmor on the workflows
 mise run format        # dprint
 mise run test          # build, then run the unit and local integration tests
 mise run build         # bundle src/ into dist/
+mise run ci            # everything CI checks
 ```
 
 The action runs the bundled `dist/index.js`. Rebuild and commit `dist/` together with every change
