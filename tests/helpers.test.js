@@ -125,7 +125,7 @@ const GIT_CONFIG = {
 
 // A Git instance with a fixed config and a fake Octokit. With `commands`, the programs it runs are
 // recorded there as { file, args, env } instead of being run, and print what `outputs` has for
-// their arguments
+// their arguments. Branch names are still checked by the real git check-ref-format
 async function loadGit({ config = {}, octokit = {}, commands, outputs = {} } = {}) {
 	const helpers = await import('../src/helpers.js')
 	const mocks = {
@@ -133,11 +133,15 @@ async function loadGit({ config = {}, octokit = {}, commands, outputs = {} } = {
 		'@actions/github': { getOctokit: () => ({ rest: octokit }), context: {} },
 	}
 	if (commands) {
+		const printed = { 'rev-parse --abbrev-ref HEAD': 'main', ...outputs }
 		mocks['../src/helpers.js'] = {
 			...helpers,
-			execFile: async (file, args, _workingDir, options = {}) => {
+			execFile: async (file, args, workingDir, options = {}) => {
+				if (args[0] === 'check-ref-format') {
+					return helpers.execFile(file, args, workingDir, options)
+				}
 				commands.push({ file, args, env: options.env })
-				return outputs[args.join(' ')] ?? ''
+				return printed[args.join(' ')] ?? ''
 			},
 		}
 	}
@@ -576,6 +580,72 @@ describe('git commands without a shell', () => {
 
 		assert.equal(gitIn(dir, 'log', '-1', '--format=%B'), `${message}\n\nbody with 'quotes'`)
 		assert.equal(await fs.pathExists(path.join(dir, 'pwned')), false)
+	})
+})
+
+describe('branch names', () => {
+	const repo = (branch) => ({
+		fullName: 'github.com/owner/repo',
+		uniqueName: `github.com/owner/repo@${branch}`,
+		host: 'github.com',
+		user: 'owner',
+		name: 'repo',
+		branch,
+	})
+	const identity = { GIT_USERNAME: 'u', GIT_EMAIL: 'e@example.com' }
+
+	// The first ones git would read as options. @{-1} is the branch checked out before
+	for (const branch of ['-b', '--upload-pack=touch${IFS}pwned', 'HEAD', '@{-1}', 'two words']) {
+		test(`rejects the sync.yml branch ${branch} before cloning`, async () => {
+			const commands = []
+			const git = await loadGit({ config: identity, commands })
+			const quoted = JSON.stringify(branch)
+
+			await assert.rejects(git.initRepo(repo(branch)), {
+				message: `The branch ${quoted} of github.com/owner/repo is not a valid branch name`,
+			})
+			assert.deepEqual(commands, [])
+		})
+	}
+
+	test('rejects a base branch starting with -', async () => {
+		const commands = []
+		const git = await loadGit({
+			config: identity,
+			commands,
+			outputs: { 'rev-parse --abbrev-ref HEAD': '--output=pwned' },
+		})
+
+		await assert.rejects(git.initRepo(repo('default')), {
+			message:
+				'The base branch "--output=pwned" of github.com/owner/repo is not a valid branch name',
+		})
+		assert.equal(commands.at(-1).args.join(' '), 'rev-parse --abbrev-ref HEAD')
+	})
+
+	test('rejects a PR branch starting with -', async () => {
+		const commands = []
+		const git = await loadGit({ config: { BRANCH_PREFIX: '--output=pwned' }, commands })
+		git.repo = repo('main')
+
+		await assert.rejects(git.createPrBranch(), {
+			message:
+				'The PR branch "--output=pwned/main" of github.com/owner/repo is not a valid branch name',
+		})
+		assert.deepEqual(commands, [])
+		assert.equal(git.prBranch, undefined)
+	})
+
+	test('clones and branches off a valid branch', async () => {
+		const commands = []
+		const git = await loadGit({ config: identity, commands })
+
+		await git.initRepo(repo('release/v1.2'))
+		await git.createPrBranch()
+
+		const args = commands.map(({ args }) => args)
+		assert.ok(args.some((command) => command.includes('release/v1.2')))
+		assert.deepEqual(args.at(-1), ['checkout', '-b', 'repo-sync/source/release/v1.2'])
 	})
 })
 

@@ -70,6 +70,22 @@ export default class Git {
 		return execFile('git', args, this.workingDir, options)
 	}
 
+	// Fails the repository unless name is a branch name that git takes as it is. git would read one
+	// that starts with - as an option, and check-ref-format prints something else for @{-1}
+	async checkBranchName(name, description) {
+		const valid = !name.startsWith('-')
+			&& await execFile('git', ['check-ref-format', '--branch', name]).then(
+				(output) => output === name,
+				() => false,
+			)
+		if (!valid) {
+			const quoted = JSON.stringify(name)
+			throw new Error(
+				`The ${description} ${quoted} of ${this.repo.fullName} is not a valid branch name`,
+			)
+		}
+	}
+
 	async initRepo(repo) {
 		// Reset repo specific values
 		this.existingPr = undefined
@@ -83,6 +99,10 @@ export default class Git {
 			IS_FINE_GRAINED ? 'oauth:' : ''
 		}${GITHUB_TOKEN}`
 		this.gitUrl = `https://${credentials}@${repo.fullName}.git`
+
+		if (repo.branch !== 'default') {
+			await this.checkBranchName(repo.branch, 'branch')
+		}
 
 		await this.clone()
 		await this.setIdentity()
@@ -151,6 +171,7 @@ export default class Git {
 
 	async getBaseBranch() {
 		this.baseBranch = await this.exec(['rev-parse', '--abbrev-ref', 'HEAD'])
+		await this.checkBranchName(this.baseBranch, 'base branch')
 	}
 
 	async createPrBranch() {
@@ -167,6 +188,8 @@ export default class Git {
 		if (OVERWRITE_EXISTING_PR === false) {
 			newBranch += `-${Math.round(new Date().getTime() / 1000)}`
 		}
+
+		await this.checkBranchName(newBranch, 'PR branch')
 
 		core.debug(`Creating PR Branch ${newBranch}`)
 
