@@ -56,3 +56,119 @@ group:
 		}
 	})
 })
+
+describe('repo groups', () => {
+	// The entry parseConfig makes of a file given only by its source
+	const file = (source) => ({
+		source,
+		dest: source,
+		template: false,
+		replace: true,
+		deleteOrphaned: false,
+		exclude: undefined,
+	})
+	// The repos parseConfig resolves, in order, with their files
+	const resolved = (repos) => repos.map(({ repo, files }) => [repo.uniqueName, files])
+
+	test('resolve a group name in repos to the repos of that group', async () => {
+		const { parseConfig, warnings } = await loadConfig(`
+repo_groups:
+  backend:
+    - user/api
+    - user/worker
+  frontend:
+    - user/web
+    - user/mobile
+
+group:
+  - files:
+      - source: .github/workflows/test.yml
+        dest: .github/workflows/test.yml
+    repos: backend
+
+  - files:
+      - source: LICENSE
+        dest: LICENSE
+    repos: frontend
+`)
+
+		const repos = await parseConfig()
+
+		assert.deepEqual(resolved(repos), [
+			['github.com/user/api@default', [file('.github/workflows/test.yml')]],
+			['github.com/user/worker@default', [file('.github/workflows/test.yml')]],
+			['github.com/user/web@default', [file('LICENSE')]],
+			['github.com/user/mobile@default', [file('LICENSE')]],
+		])
+		assert.deepEqual(warnings, [])
+	})
+
+	test('are optional for inline repos lists and repo keys', async () => {
+		const { parseConfig, warnings } = await loadConfig(`
+group:
+  - files:
+      - source: .github/workflows/test.yml
+        dest: .github/workflows/test.yml
+    repos: |
+      user/repo1
+      user/repo2
+      user/repo3
+
+user/repo4:
+  - LICENSE
+  - .gitignore
+`)
+
+		const repos = await parseConfig()
+
+		assert.deepEqual(resolved(repos), [
+			['github.com/user/repo1@default', [file('.github/workflows/test.yml')]],
+			['github.com/user/repo2@default', [file('.github/workflows/test.yml')]],
+			['github.com/user/repo3@default', [file('.github/workflows/test.yml')]],
+			['github.com/user/repo4@default', [file('LICENSE'), file('.gitignore')]],
+		])
+		assert.deepEqual(warnings, [])
+	})
+
+	test('resolve group names on the lines of an inline repos list', async () => {
+		const { parseConfig, warnings } = await loadConfig(`
+repo_groups:
+  main_repos:
+    - user/repo1
+    - user/repo2
+  extra_repos:
+    - user/repo5
+    - user/repo6
+
+group:
+  - files:
+      - source: .github/workflows/build.yml
+    repos: main_repos
+
+  - files:
+      - source: README.md
+    repos: |
+      user/repo3
+      user/repo4
+
+  # Multi-line string with group references (the squash-merge bug case)
+  - files:
+      - source: LICENSE
+    repos: |
+      main_repos
+      extra_repos
+`)
+
+		const repos = await parseConfig()
+
+		assert.deepEqual(resolved(repos), [
+			['github.com/user/repo1@default', [file('.github/workflows/build.yml'), file('LICENSE')]],
+			['github.com/user/repo2@default', [file('.github/workflows/build.yml'), file('LICENSE')]],
+			['github.com/user/repo3@default', [file('README.md')]],
+			['github.com/user/repo4@default', [file('README.md')]],
+			['github.com/user/repo5@default', [file('LICENSE')]],
+			['github.com/user/repo6@default', [file('LICENSE')]],
+		])
+		assert.deepEqual(warnings, [])
+	})
+})
