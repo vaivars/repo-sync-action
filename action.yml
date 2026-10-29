@@ -1,105 +1,104 @@
-name: 'File sync over across repos action'
-description: 'GitHub Action to Sync Files like Workflows Between Repositories.'
+name: 'Repo Sync Action'
+description: 'Keep files and directories in sync across GitHub repositories.'
 author: 'Vaivars'
 
 inputs:
   GH_PAT:
     description: |
-      GitHub Personal Access Token to use to get repos and write secrets
+      Personal access token (classic or fine-grained) with access to the target repositories. Required unless GH_INSTALLATION_TOKEN is set
     required: false
   GH_INSTALLATION_TOKEN:
     description: |
-      GitHub App Installation Token to used to access repos
+      GitHub App installation token with access to the target repositories. Used when GH_PAT is not set
     required: false
   CONFIG_PATH:
     description: |
-      The path for the sync configuration file
+      Path to the sync configuration file. Defaults to .github/sync.yml
     required: false
   IS_FINE_GRAINED:
     description: |
-      Label GH_PAT as a fine grained token
+      Set to true when GH_PAT is a fine-grained token. Defaults to false
     required: false
   PR_LABELS:
     description: |
-      Labels which will be added to the pull request. Defaults to sync. Set to false to turn off
+      Labels to add to the pull request, one per line. Set to false to add none. Defaults to sync
     required: false
   PR_BODY:
     description: |
-      Additional content to add in the PR description. Defaults to ''
+      Extra text for the pull request description. Defaults to none
     required: false
   ASSIGNEES:
     description: |
-      Users to assign to the pull request. Defaults to none
+      Users to assign to the pull request, one per line. Defaults to none
     required: false
   REVIEWERS:
     description: |
-      Users to request a review of the pull request from. Defaults to none
+      Users to request a review from, one per line. Defaults to none
     required: false
   TEAM_REVIEWERS:
     description: |
-      Teams to request a review of the pull request from. Defaults to none
+      Teams to request a review from, one per line. Defaults to none
     required: false
   COMMIT_PREFIX:
     description: |
-      Prefix for commit message and pull request title. Defaults to 🔄
+      Prefix for commit messages and the pull request title. Defaults to 🔄
     required: false
   COMMIT_BODY:
     description: |
-      Commit message body. Will be appended to commit message, separated by two line returns. Defaults to ''
+      Text appended to every commit message after a blank line. Defaults to none
     required: false
   COMMIT_EACH_FILE:
     description: |
-      Commit each file seperately. Defaults to true
+      Create one commit per file entry instead of one commit for everything. Defaults to true
     required: false
   GIT_EMAIL:
     description: |
-      The e-mail address used to commit the synced files. Defaults to the email of the GitHub PAT
+      Commit author email. Defaults to the email of the GH_PAT owner
     required: false
   GIT_USERNAME:
     description: |
-      The username used to commit the synced files. Defaults to the username of the GitHub PAT
+      Commit author name. Defaults to the login of the GH_PAT owner
     required: false
   TMP_DIR:
     description: |
-      The working directory where all sync operations will be done. Defaults to `tmp-${Date.now().toString()}`
+      Working directory for the clones. Defaults to tmp-<timestamp>
     required: false
   DRY_RUN:
     description: |
-      Run everything except for nothing will be updated. Defaults to false
+      Do everything except push and open pull requests. Defaults to false
     required: false
   SKIP_CLEANUP:
     description: |
-      Skip removing the temporary directory (useful for debugging). Defaults to false
+      Keep TMP_DIR after the run (useful for debugging). Defaults to false
     required: false
   OVERWRITE_EXISTING_PR:
     description: |
-      Overwrite any existing Sync PR with the new changes. Defaults to true
+      Update an open sync pull request instead of opening a new one. Defaults to true
     required: false
   ORIGINAL_MESSAGE:
     description: |
-      Re-use the original commit message for commits and PR body. Works only if the action is triggered by pushing one commit. Defaults to false
+      When a push of a single commit triggers the run, reuse its message for commits and its body as the pull request description. Defaults to false
     required: false
   COMMIT_AS_PR_TITLE:
     description: |
-      Re-use the commit message as PR title. Works only if ORIGINAL_MESSAGE is on and PR has one commit. Defaults to false
+      With ORIGINAL_MESSAGE, use the first line of that message as the pull request title. Defaults to false
     required: false
   SKIP_PR:
     description: |
-      Skips creating a Pull Request and pushes directly to the default branch. Defaults to false
+      Commit straight to the target branch without a pull request. Defaults to false
     required: false
   BRANCH_PREFIX:
     description: |
-      Specify a different prefix for the new branch in the target repo. Defaults to repo-sync/SOURCE_REPO_NAME
+      Prefix for the pull request branch. SOURCE_REPO_NAME is replaced with the source repository name. Defaults to repo-sync/SOURCE_REPO_NAME
     required: false
   FORK:
     description: |
-      Specify the user account that will be used in a fork and pull-request workflow. Defaults
-      false.
+      Account whose fork the changes are pushed to before opening the pull request. The token must belong to this account. Defaults to none
     required: false
 
 outputs:
   pull_request_urls:
-    description: 'The URLs to the created Pull Requests as an array'
+    description: 'JSON array of the URLs of pull requests created or updated in this run'
 
 runs:
   using: 'node24'
