@@ -4,6 +4,7 @@ dprint = "0.64.3"
 actionlint = "1.7.12"
 shellcheck = "0.11.0"
 zizmor = "1.31.1"
+git-cliff = "2.14.2"
 
 [tasks.install]
 description = "Install the dependencies from the lockfile"
@@ -22,10 +23,11 @@ run = "dprint fmt"
 run = "dprint check"
 
 [tasks."lint:actions"]
-description = "Lint the GitHub Actions workflows. zizmor adds its online audits when GH_TOKEN is set"
+description = "Lint the GitHub Actions workflows and their scripts. zizmor adds its online audits when GH_TOKEN is set"
 run = [
     "actionlint",
     "zizmor .github/workflows",
+    "shellcheck scripts/*.sh",
 ]
 
 [tasks.test]

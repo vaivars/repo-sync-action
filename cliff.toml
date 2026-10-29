@@ -1,0 +1,74 @@
+# git-cliff configuration: https://git-cliff.org/docs/configuration
+# Generates CHANGELOG.md and the release notes from Conventional Commits. See scripts/release-pr.sh
+
+[changelog]
+header = """
+# Changelog
+
+All notable changes to this project are documented in this file. It is generated from
+[Conventional Commits](https://www.conventionalcommits.org) by [git-cliff](https://git-cliff.org).\n
+"""
+body = """
+{% if version -%}
+    {% if previous.version -%}
+        ## [{{ version | trim_start_matches(pat="v") }}]($REPO/compare/{{ previous.version }}...{{ version }}) - {{ timestamp | date(format="%Y-%m-%d") }}
+    {% else -%}
+        ## [{{ version | trim_start_matches(pat="v") }}]($REPO/releases/tag/{{ version }}) - {{ timestamp | date(format="%Y-%m-%d") }}
+    {% endif -%}
+{% elif previous.version -%}
+    ## [Unreleased]($REPO/compare/{{ previous.version }}...main)
+{% else -%}
+    ## [Unreleased]
+{% endif -%}
+{% for group, commits in commits | group_by(attribute="group") %}
+    ### {{ group | striptags | trim }}
+    {% for commit in commits %}
+        - {% if commit.breaking %}**Breaking:** {% endif -%}
+          {% if commit.scope %}**{{ commit.scope }}:** {% endif -%}
+          {{ commit.message | split(pat="\n") | first | trim }}\
+    {% endfor %}
+{% endfor %}\n
+"""
+footer = """
+Releases before the fork: [BetaHuhn/repo-file-sync-action](https://github.com/BetaHuhn/repo-file-sync-action/releases).
+"""
+trim = true
+postprocessors = [
+    { pattern = '\$REPO', replace = 'https://github.com/vaivars/repo-sync-action' },
+]
+
+[git]
+conventional_commits = true
+# Drops the upstream history before the fork and the old gitmoji Dependabot commits
+filter_unconventional = true
+split_commits = false
+# Squash merges end with the PR number, e.g. "fix: Something (#42)"
+commit_preprocessors = [
+    { pattern = '\(#([0-9]+)\)', replace = '([#${1}](https://github.com/vaivars/repo-sync-action/pull/${1}))' },
+]
+# The first match wins
+commit_parsers = [
+    # The only conventional-looking commit in the upstream history before the fork
+    { sha = '3e677233b6989b61955399fe51be478c83c8e4cd', skip = true },
+    { message = '^chore: release v[0-9]', skip = true },
+    { message = '^(chore|ci)\(deps', skip = true },
+    { message = '^(⬆️|:arrow_up:) Bump ', skip = true },
+    { message = '^feat', group = '<!-- 0 -->Features' },
+    { message = '^fix', group = '<!-- 1 -->Bug Fixes' },
+    { message = '^docs?', group = '<!-- 2 -->Documentation' },
+    { message = '^refactor', group = '<!-- 3 -->Refactor' },
+    { message = '^test', group = '<!-- 4 -->Tests' },
+    { message = '^ci', group = '<!-- 5 -->CI' },
+    { message = '.*', group = '<!-- 6 -->Miscellaneous' },
+]
+# A breaking commit is never skipped, even by a rule above
+protect_breaking_commits = true
+filter_commits = false
+# Releases are vX.Y.Z tags. This ignores the floating major tags (v1) and the stray 1.0.0
+tag_pattern = '^v[0-9]+\.[0-9]+\.[0-9]+$'
+topo_order = false
+sort_commits = 'oldest'
+
+[bump]
+features_always_bump_minor = true
+breaking_always_bump_major = true

@@ -1,48 +1,56 @@
 name: Release
 
-# `released` covers publishing a full release and promoting a pre-release, never pre-releases
+# Merging the release PR (see release-pr.yml) tags vX.Y.Z, publishes the GitHub release and moves
+# the major tag. workflow_dispatch does the same for a release commit that is already on main, for
+# example when this failed or the PR was merged without the release label
 on:
-  release:
-    types: [released]
+  pull_request:
+    types: [closed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, e.g. 2.0.0. Its "chore: release v2.0.0" commit must be on main'
+        required: true
+        type: string
 
 permissions: {}
 
+# Every closed PR starts this workflow, so only releases share a group, and another PR can't replace
+# a pending release. A running release is never cancelled
 concurrency:
-  group: ${{ github.workflow }}
+  group: ${{ github.workflow }}-${{ (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'release')) && 'release' || github.run_id }}
   cancel-in-progress: false
 
 jobs:
-  major-tag:
-    name: Move major version tag
+  release:
+    name: Publish the release
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      || (github.event.pull_request.merged
+      && contains(github.event.pull_request.labels.*.name, 'release')
+      && github.event.pull_request.head.ref == 'release'
+      && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
-      contents: write
+      contents: write # push the tags and create the release
     steps:
-      - name: Point the major tag at this release
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The merged commit on main. Empty for workflow_dispatch, which checks out main
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          # git-cliff needs the history and the tags
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install_args: git-cliff
+          # The job has a write token, so don't restore a cache another workflow could have saved
+          cache: false
+      - name: Tag, publish the release and move the major tag
+        run: scripts/release.sh
         env:
+          DRY_RUN: '0'
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name }}
-        run: |
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::notice::$TAG is not a vX.Y.Z tag, leaving major tags alone"
-            exit 0
-          fi
-          major="${TAG%%.*}"
-
-          # Only move forward, so a backport release doesn't pull the major tag back
-          latest=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$major." --paginate \
-            --jq '.[].ref | ltrimstr("refs/tags/")' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
-          if [ "$latest" != "$TAG" ]; then
-            echo "::notice::$latest is newer than $TAG, leaving $major alone"
-            exit 0
-          fi
-
-          sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)
-          # git/ref (singular) matches exactly; git/refs would also match v2.0.0 when v2 is missing
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$major" --silent 2>/dev/null; then
-            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$major" -f sha="$sha" -F force=true --silent
-          else
-            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$major" -f sha="$sha" --silent
-          fi
-          echo "::notice::Moved $major to $TAG ($sha)"
+          VERSION: ${{ inputs.version }}
