@@ -38999,13 +38999,6 @@ module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("assert");
 
 /***/ }),
 
-/***/ 5317:
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("child_process");
-
-/***/ }),
-
 /***/ 9140:
 /***/ ((module) => {
 
@@ -39227,161 +39220,6 @@ module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("tls");
 /***/ ((module) => {
 
 module.exports = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("util");
-
-/***/ }),
-
-/***/ 5389:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
-
-
-
-const {spawnSync} = __nccwpck_require__(5317);
-
-const isString = (a) => typeof a === 'string';
-
-module.exports = (str, filter = {}) => {
-    if (!isString(str)) {
-        filter = str || {};
-        str = run();
-    }
-    
-    const {
-        added,
-        modified,
-        untracked,
-        deleted,
-        renamed,
-        unstaged,
-    } = filter;
-    
-    const files = parse(str);
-    
-    const picked = pick(files, {
-        added,
-        modified,
-        untracked,
-        deleted,
-        renamed,
-        unstaged,
-    });
-    
-    const names = getNames(picked);
-    
-    return names;
-};
-
-const getName = ({name}) => name;
-
-module.exports.getNames = getNames;
-function getNames(files) {
-    return files.map(getName);
-}
-
-module.exports.run = run;
-function run() {
-    const result = spawnSync('git', ['status', '--porcelain']);
-    return result.stdout.toString();
-}
-
-module.exports.parse = parse;
-function parse(str) {
-    const result = [];
-    
-    const lines = str
-        .split('\n')
-        .filter(Boolean);
-    
-    for (const line of lines) {
-        const {name, mode} = parseLine(line);
-        
-        result.push({
-            name,
-            mode,
-        });
-    }
-    
-    return result;
-}
-
-const UNTRACKED = '?';
-const RENAMED = 'R';
-const ARROW = '-> ';
-
-// "R  a -> b" -> "b"
-const cutRenameTo = (line) => {
-    const i = line.indexOf(ARROW);
-    const count = i + ARROW.length;
-    
-    return line.slice(count);
-};
-
-function parseLine(line) {
-    const [first] = line;
-    
-    if (first === UNTRACKED)
-        return {
-            name: line.replace('?? ', ''),
-            mode: UNTRACKED,
-        };
-    
-    if (first === RENAMED)
-        return {
-            name: cutRenameTo(line),
-            mode: RENAMED,
-        };
-    
-    const [mode] = line.match(/^[\sA-Z]+\s/, '');
-    const name = line.replace(mode, '');
-    
-    return {
-        name,
-        mode,
-    };
-}
-
-const isModified = ({mode}) => mode === 'M  ' || mode === 'MM ';
-const isAdded = ({mode}) => mode === 'A  ';
-const isRenamed = ({mode}) => /R/.test(mode);
-const isDeleted = ({mode}) => /D/.test(mode);
-const isUntracked = ({mode}) => /\?/.test(mode);
-const isUnstaged = ({mode}) => mode === ' M ';
-
-const check = ({added, modified, untracked, unstaged, deleted, renamed}) => (file) => {
-    let is = false;
-    
-    if (added)
-        is = is || isAdded(file);
-    
-    if (modified)
-        is = is || isModified(file);
-    
-    if (untracked)
-        is = is || isUntracked(file);
-    
-    if (unstaged)
-        is = is || isUnstaged(file);
-    
-    if (deleted)
-        is = is || isDeleted(file);
-    
-    if (renamed)
-        is = is || isRenamed(file);
-    
-    return is;
-};
-
-module.exports.pick = pick;
-function pick(files, {added, modified, deleted, untracked, unstaged, renamed}) {
-    return files.filter(check({
-        added,
-        modified,
-        untracked,
-        unstaged,
-        deleted,
-        renamed,
-    }));
-}
-
 
 /***/ }),
 
@@ -41072,8 +40910,8 @@ function toPlatformPath(pth) {
 var external_string_decoder_ = __nccwpck_require__(3193);
 // EXTERNAL MODULE: external "events"
 var external_events_ = __nccwpck_require__(4434);
-// EXTERNAL MODULE: external "child_process"
-var external_child_process_ = __nccwpck_require__(5317);
+;// CONCATENATED MODULE: external "child_process"
+const external_child_process_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("child_process");
 // EXTERNAL MODULE: external "assert"
 var external_assert_ = __nccwpck_require__(2613);
 ;// CONCATENATED MODULE: ./node_modules/@actions/io/lib/io-util.js
@@ -41915,7 +41753,7 @@ class ToolRunner extends external_events_.EventEmitter {
                     return reject(new Error(`The cwd: ${this.options.cwd} does not exist!`));
                 }
                 const fileName = this._getSpawnFileName();
-                const cp = external_child_process_.spawn(fileName, this._getSpawnArgs(optionsNonNull), this._getSpawnOptions(this.options, fileName));
+                const cp = external_child_process_namespaceObject.spawn(fileName, this._getSpawnArgs(optionsNonNull), this._getSpawnOptions(this.options, fileName));
                 let stdbuffer = '';
                 if (cp.stdout) {
                     cp.stdout.on('data', (data) => {
@@ -42602,7 +42440,7 @@ function changedFiles({ source, dest, isDirectory }, syncedFiles, fileStatuses) 
     // Use different commit/pr message based on if the source is a directory or file
     const directory = isDirectory ? 'directory' : 'file';
     const files = syncedFiles.map((filePath) => {
-        const mode = fileStatuses[filePath] || '';
+        const mode = fileStatuses.get(filePath) || '';
         const relPath = isDirectory
             ? external_path_.relative(dest, filePath)
             : external_path_.basename(filePath);
@@ -42613,6 +42451,15 @@ function changedFiles({ source, dest, isDirectory }, syncedFiles, fileStatuses) 
         header: `From remote ${directory} <code>${source}</code>, synced the following files:`,
         files,
     };
+}
+
+;// CONCATENATED MODULE: ./src/errors.ts
+// What the debug log shows of something thrown: the stack of an Error, which starts with its
+// message, or the message of one without a stack, and anything else as a string
+function errorDetails(error) {
+    if (error instanceof Error)
+        return error.stack || error.message;
+    return String(error);
 }
 
 ;// CONCATENATED MODULE: ./src/auth.ts
@@ -45773,6 +45620,10 @@ try {
     // getInput returns a string, boolean or array as each input's options say, which Config spells out
     context = values;
     core_setSecret(context.GITHUB_TOKEN);
+    if (context.FORK && context.SKIP_PR) {
+        throw new Error("FORK and SKIP_PR can't be used together: SKIP_PR pushes straight to the target branch, "
+            + 'while FORK opens a pull request from a fork');
+    }
     core_debug(JSON.stringify(context, null, 2));
     while (fs_extra_lib_default().existsSync(context.TMP_DIR)) {
         context.TMP_DIR = tmpDirIn(external_path_.dirname(context.TMP_DIR));
@@ -45845,7 +45696,10 @@ const resolveRepoList = (reposValue, repoGroups) => {
     if (typeof reposValue === 'string') {
         const trimmedValue = reposValue.trim();
         // Check if this is a group reference (no newlines, matches a group name)
-        if (!trimmedValue.includes('\n') && repoGroups[trimmedValue]) {
+        // Only the groups sync.yml defines, not the properties every object inherits
+        if (!trimmedValue.includes('\n')
+            && Object.hasOwn(repoGroups, trimmedValue)
+            && repoGroups[trimmedValue]) {
             core_debug(`Resolving repo group reference: ${trimmedValue}`);
             const groupRepos = repoGroups[trimmedValue];
             if (!Array.isArray(groupRepos)) {
@@ -45864,7 +45718,7 @@ const resolveRepoList = (reposValue, repoGroups) => {
             .map((n) => n.trim())
             .filter((n) => n);
         return entries.flatMap((entry) => {
-            if (repoGroups[entry] && Array.isArray(repoGroups[entry])) {
+            if (Object.hasOwn(repoGroups, entry) && Array.isArray(repoGroups[entry])) {
                 core_debug(`Resolving repo group reference: ${entry}`);
                 return repoGroups[entry];
             }
@@ -45937,10 +45791,7 @@ async function parseConfig() {
 }
 /* harmony default export */ const config = (context);
 
-// EXTERNAL MODULE: ./node_modules/@putout/git-status-porcelain/lib/porcelain.js
-var porcelain = __nccwpck_require__(5389);
 ;// CONCATENATED MODULE: ./src/git-output.ts
-
 // Splits git diff output by file: the path of each file, mapped to the diff of its content.
 // Binary files have no diff of their content and are left out
 function parseGitDiffOutput(string) {
@@ -45994,16 +45845,30 @@ function parseTreeDiff(output) {
     }
     return diff;
 }
-// The git status --porcelain status letters of each changed file, by its path
-function parseFileStatuses(statusOutput) {
-    return (0,porcelain.parse)(statusOutput).reduce((acc, entry) => {
-        acc[entry.name] = entry.mode;
-        return acc;
-    }, {});
+// The entries of git status --porcelain -z output. -z prints the paths verbatim, without the quotes
+// and escapes that git puts around paths with spaces or non-ASCII characters otherwise
+function parseStatus(statusOutput) {
+    // Each entry is "XY <path>" NUL, and a rename or copy is followed by "<from path>" NUL
+    const fields = statusOutput.split('\0');
+    const entries = [];
+    for (let i = 0; i < fields.length; i++) {
+        if (fields[i] === '')
+            continue;
+        const status = fields[i].slice(0, 2);
+        entries.push({ status, path: fields[i].slice(3) });
+        if (/[RC]/.test(status))
+            i++;
+    }
+    return entries;
 }
-// Whether git status --porcelain lists any changes
+// The git status --porcelain -z status letters of each changed file, by its path. A Map, so that a
+// path like constructor or __proto__ is a key like any other
+function parseFileStatuses(statusOutput) {
+    return new Map(parseStatus(statusOutput).map(({ path, status }) => [path, status]));
+}
+// Whether git status --porcelain -z lists any changes
 function hasStatusChanges(statusOutput) {
-    return (0,porcelain.parse)(statusOutput).length !== 0;
+    return parseStatus(statusOutput).length !== 0;
 }
 
 ;// CONCATENATED MODULE: ./node_modules/@actions/github/lib/context.js
@@ -50529,16 +50394,17 @@ function prBranchName(branchPrefix, sourceRepository, branch, timestamp) {
 function prHead(fork, owner, branch) {
     return `${fork ? fork : owner}:${branch}`;
 }
+// A PR without a body has null for it, which counts as empty
 function withPrWarning(body) {
     // Tagged, so that only the template is dedented and the body keeps its indentation
     return dedent `
 		${PR_WARNING}
 
-		${body}
+		${body ?? ''}
 	`;
 }
 function withoutPrWarning(body) {
-    return body.replace(PR_WARNING, '');
+    return (body ?? '').replace(PR_WARNING, '');
 }
 function renderPrBody(changedFiles, description, { sourceRepository, serverUrl, prBody, runId }) {
     // Tagged, so that only the template is dedented and the interpolated content keeps its
@@ -50812,7 +50678,6 @@ class github_GitHub {
         await this.api.pulls.update({
             ...this.target,
             pull_number: this.pr.number,
-            // A PR without a body fails here, as it did before
             body: withoutPrWarning(this.pr.body),
         });
     }
@@ -50948,7 +50813,7 @@ const liquid = new liquid_node/* Liquid */.HX({
 function runFile(file, args, workingDir, options) {
     core_debug(`EXEC: "${file} ${args.join(' ')}" IN ${workingDir}`);
     return new Promise((resolve, reject) => {
-        external_child_process_.execFile(file, args, {
+        external_child_process_namespaceObject.execFile(file, args, {
             cwd: workingDir,
             ...options,
         }, function (error, stdout) {
@@ -51143,11 +51008,12 @@ function fileCommitMessage(original, { prefix, source, dest, destExists }) {
         ? `${prefix} synced local '${dest}' with remote '${source}'`
         : `${prefix} created local '${dest}' from remote '${source}'`;
 }
-// The PR title that COMMIT_AS_PR_TITLE takes from the original message: its first line
+// The PR title that COMMIT_AS_PR_TITLE takes from the original message: its first line. Undefined,
+// which gets the PR the default title, when that line is empty
 function prTitle(original, commitAsPrTitle) {
-    return commitAsPrTitle && original !== undefined
-        ? original.split('\n', 1)[0].trim()
-        : undefined;
+    if (!commitAsPrTitle || original === undefined)
+        return undefined;
+    return original.split('\n', 1)[0].trim() || undefined;
 }
 // The PR description taken from the original message: what follows its first line
 function prDescription(original) {
@@ -51304,12 +51170,13 @@ class Git {
         const output = await this.exec(['diff', 'HEAD', '--', destination]);
         return Object.values(parseGitDiffOutput(output));
     }
+    // The output is not trimmed, which would cut the spaces of a status or a path
     async getFileStatuses() {
-        const statusOutput = await this.exec(['status', '--porcelain']);
+        const statusOutput = await this.exec(['status', '--porcelain', '-z'], { trimResult: false });
         return parseFileStatuses(statusOutput);
     }
     async hasChanges() {
-        const statusOutput = await this.exec(['status', '--porcelain']);
+        const statusOutput = await this.exec(['status', '--porcelain', '-z'], { trimResult: false });
         return hasStatusChanges(statusOutput);
     }
     async commit(msg) {
@@ -51355,7 +51222,7 @@ class Git {
     }
     async push() {
         if (FORK) {
-            // prBranch is set: FORK goes with a PR
+            // prBranch is set: config.ts rejects FORK together with SKIP_PR
             return this.execRemote(['push', '-u', 'fork', this.prBranch, '--force']);
         }
         if (IS_INSTALLATION_TOKEN) {
@@ -51392,6 +51259,7 @@ class Git {
 }
 
 ;// CONCATENATED MODULE: ./src/index.ts
+
 
 
 
@@ -51500,8 +51368,7 @@ async function processRepository(item, git, prUrls) {
     }
     catch (err) {
         setFailed(err.message);
-        // core.debug logs a value other than a string as JSON, which is {} for most errors
-        core_debug(err);
+        core_debug(errorDetails(err));
     }
 }
 async function syncFile(file, git, modified) {
@@ -51557,7 +51424,7 @@ async function syncFile(file, git, modified) {
 if (import.meta.url === (0,external_url_namespaceObject.pathToFileURL)(process.argv[1]).href) {
     run().catch((err) => {
         setFailed(err.message);
-        core_debug(err);
+        core_debug(errorDetails(err));
     });
 }
 
