@@ -157,6 +157,13 @@ try {
 
 	core.setSecret(context.GITHUB_TOKEN)
 
+	if (context.FORK && context.SKIP_PR) {
+		throw new Error(
+			"FORK and SKIP_PR can't be used together: SKIP_PR pushes straight to the target branch, "
+				+ 'while FORK opens a pull request from a fork',
+		)
+	}
+
 	core.debug(JSON.stringify(context, null, 2))
 
 	while (fs.existsSync(context.TMP_DIR)) {

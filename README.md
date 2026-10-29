@@ -215,6 +215,8 @@ Alternatives to this flow:
   the fork. The token must belong to that account. Labels, assignees and reviewers aren't applied in
   this mode.
 
+`SKIP_PR` and `FORK` can't be used together, and the run fails if both are set.
+
 A workflow step that customizes the pull request:
 
 ```yml
@@ -254,8 +256,8 @@ One of `GH_PAT` or `GH_INSTALLATION_TOKEN` is required. All other inputs are opt
 | `GIT_EMAIL`             | Commit author email                                                                                                         | `GH_PAT` owner                       |
 | `BRANCH_PREFIX`         | Prefix for the pull request branch. `SOURCE_REPO_NAME` is replaced with the source repository name                          | `repo-sync/SOURCE_REPO_NAME`         |
 | `OVERWRITE_EXISTING_PR` | Update an open sync pull request instead of opening a new one                                                               | `true`                               |
-| `SKIP_PR`               | Commit straight to the target branch without a pull request                                                                 | `false`                              |
-| `FORK`                  | Account whose fork the changes are pushed to before opening the pull request                                                |                                      |
+| `SKIP_PR`               | Commit straight to the target branch without a pull request. Can't be used together with `FORK`                             | `false`                              |
+| `FORK`                  | Account whose fork the changes are pushed to before opening the pull request. Can't be used together with `SKIP_PR`         |                                      |
 | `DRY_RUN`               | Do everything except push and open pull requests                                                                            | `false`                              |
 | `TMP_DIR`               | Working directory for the clones. Files in it are never synced or read by templates                                         | `$RUNNER_TEMP/repo-sync-<timestamp>` |
 | `SKIP_CLEANUP`          | Keep `TMP_DIR` after the run                                                                                                | `false`                              |

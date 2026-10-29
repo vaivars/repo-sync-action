@@ -76,16 +76,8 @@ export async function loadHelpers(): Promise<typeof import('../src/helpers.ts')>
 	})
 }
 
-// config.ts reads its inputs when it is imported, so every call loads a fresh copy of it
-export async function loadConfig(
-	syncYml: string,
-	inputs: Record<string, string | undefined> = {},
-): Promise<{
-	context: Config & Record<string, unknown>
-	parseConfig: typeof import('../src/config.ts').parseConfig
-	resolveRepoList: typeof import('../src/config.ts').resolveRepoList
-	warnings: string[]
-}> {
+// Sets the action's inputs, from INPUT_ variables like the runner does, with syncYml as sync.yml
+async function setInputs(syncYml: string, inputs: Record<string, string | undefined>) {
 	const dir = await makeTmpDir()
 	const configPath = path.join(dir, 'sync.yml')
 	await fs.writeFile(configPath, syncYml)
@@ -104,6 +96,19 @@ export async function loadConfig(
 		if (value !== undefined) process.env[`INPUT_${key}`] = value
 	}
 	process.env.GITHUB_SERVER_URL = 'https://github.com'
+}
+
+// config.ts reads its inputs when it is imported, so every call loads a fresh copy of it
+export async function loadConfig(
+	syncYml: string,
+	inputs: Record<string, string | undefined> = {},
+): Promise<{
+	context: Config & Record<string, unknown>
+	parseConfig: typeof import('../src/config.ts').parseConfig
+	resolveRepoList: typeof import('../src/config.ts').resolveRepoList
+	warnings: string[]
+}> {
+	await setInputs(syncYml, inputs)
 
 	const warnings: string[] = []
 	const config = await esmock<typeof import('../src/config.ts')>('../src/config.ts', {
@@ -115,6 +120,41 @@ export async function loadConfig(
 		resolveRepoList: config.resolveRepoList,
 		warnings,
 	}
+}
+
+// What process.exit throws while configFailure loads config.ts
+class ExitError extends Error {
+	code: number | string | null | undefined
+
+	constructor(code: number | string | null | undefined) {
+		super(`process.exit(${code})`)
+		this.code = code
+	}
+}
+
+// How config.ts fails the run for these inputs: the messages it passes to core.setFailed, and the
+// code it then exits with, which stops loading it here instead
+export async function configFailure(
+	inputs: Record<string, string | undefined>,
+): Promise<{ failures: string[]; code: number | string | null | undefined }> {
+	await setInputs('', inputs)
+
+	const failures: string[] = []
+	const exit = process.exit
+	process.exit = (code) => {
+		throw new ExitError(code)
+	}
+	try {
+		await esmock('../src/config.ts', {
+			'@actions/core': { ...silentCore, setFailed: (message: string) => failures.push(message) },
+		})
+	} catch (error) {
+		if (error instanceof ExitError) return { failures, code: error.code }
+		throw error
+	} finally {
+		process.exit = exit
+	}
+	throw new Error('config.ts did not fail the run')
 }
 
 const GIT_CONFIG = {

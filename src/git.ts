@@ -289,7 +289,7 @@ export default class Git implements RepoSession {
 
 	async push(): Promise<string | void> {
 		if (FORK) {
-			// prBranch is set: FORK goes with a PR
+			// prBranch is set: config.ts rejects FORK together with SKIP_PR
 			return this.execRemote(['push', '-u', 'fork', this.prBranch!, '--force'])
 		}
 		if (IS_INSTALLATION_TOKEN) {
