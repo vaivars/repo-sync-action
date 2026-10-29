@@ -6,7 +6,8 @@ shellcheck = "0.11.0"
 zizmor = "1.31.1"
 
 [tasks.install]
-run = "npm install --save-dev"
+description = "Install the dependencies from the lockfile"
+run = "npm ci"
 
 [tasks.lint]
 run = "npm run lint"
@@ -31,17 +32,16 @@ run = [
 depends = ["build"]
 description = "Run the unit tests and the local integration test with mocked git"
 run = [
-    "node --test tests/helpers.test.js",
-    "node tests/local-sync.test.js",
+    "node --test 'tests/*.test.js'",
 ]
 
-[tasks.test-ci]
-hide = true
-description = "CI task for running lint/build/test and checking that the committed dist/ is up to date"
+[tasks.ci]
+description = "Run every check CI runs, except the dry run of the action itself"
 run = [
     "mise run install",
     "mise run format:check",
     "mise run lint",
+    "mise run lint:actions",
     "mise run test",
     "npm run build:check",
 ]

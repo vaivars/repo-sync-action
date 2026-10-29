@@ -1,0 +1,174 @@
+import assert from 'node:assert/strict'
+import { describe, test } from 'node:test'
+
+import { loadConfig } from './support.js'
+
+describe('config', () => {
+	for (const [value, expected] of [[undefined, false], ['false', false], ['true', true]]) {
+		test(`parses IS_FINE_GRAINED ${value} as ${expected}`, async () => {
+			const { context } = await loadConfig('', { IS_FINE_GRAINED: value })
+
+			assert.equal(context.IS_FINE_GRAINED, expected)
+		})
+	}
+
+	test('reads a repo name starting with http as owner/name and still accepts URLs', async () => {
+		const { parseConfig } = await loadConfig(`
+httpie/cli:
+  - a.txt
+https://ghe.example.com/owner/repo@main:
+  - b.txt
+`)
+
+		const repos = await parseConfig()
+
+		assert.deepEqual(repos.map(({ repo }) => repo.uniqueName), [
+			'github.com/httpie/cli@default',
+			'ghe.example.com/owner/repo@main',
+		])
+	})
+
+	test('skips file entries without a source and repos without files', async () => {
+		const { parseConfig, warnings } = await loadConfig(`
+owner/valid:
+  - source: a.txt
+  - dest: no-source.txt
+  -
+owner/null-list:
+owner/empty-list: []
+group:
+  - repos: owner/group-null
+    files:
+  - repos: owner/valid
+    files:
+      - b.txt
+`)
+
+		const repos = await parseConfig()
+
+		assert.deepEqual(
+			repos.map(({ repo, files }) => [repo.fullName, files.map((file) => file.source)]),
+			[['github.com/owner/valid', ['a.txt', 'b.txt']]],
+		)
+		assert.equal(warnings.filter((warning) => warning.includes('owner/valid')).length, 2)
+		for (const name of ['owner/null-list', 'owner/empty-list', 'owner/group-null']) {
+			assert.ok(warnings.some((warning) => warning.includes(name)), `no warning for ${name}`)
+		}
+	})
+})
+
+describe('repo groups', () => {
+	// The entry parseConfig makes of a file given only by its source
+	const file = (source) => ({
+		source,
+		dest: source,
+		template: false,
+		replace: true,
+		deleteOrphaned: false,
+		exclude: undefined,
+	})
+	// The repos parseConfig resolves, in order, with their files
+	const resolved = (repos) => repos.map(({ repo, files }) => [repo.uniqueName, files])
+
+	test('resolve a group name in repos to the repos of that group', async () => {
+		const { parseConfig, warnings } = await loadConfig(`
+repo_groups:
+  backend:
+    - user/api
+    - user/worker
+  frontend:
+    - user/web
+    - user/mobile
+
+group:
+  - files:
+      - source: .github/workflows/test.yml
+        dest: .github/workflows/test.yml
+    repos: backend
+
+  - files:
+      - source: LICENSE
+        dest: LICENSE
+    repos: frontend
+`)
+
+		const repos = await parseConfig()
+
+		assert.deepEqual(resolved(repos), [
+			['github.com/user/api@default', [file('.github/workflows/test.yml')]],
+			['github.com/user/worker@default', [file('.github/workflows/test.yml')]],
+			['github.com/user/web@default', [file('LICENSE')]],
+			['github.com/user/mobile@default', [file('LICENSE')]],
+		])
+		assert.deepEqual(warnings, [])
+	})
+
+	test('are optional for inline repos lists and repo keys', async () => {
+		const { parseConfig, warnings } = await loadConfig(`
+group:
+  - files:
+      - source: .github/workflows/test.yml
+        dest: .github/workflows/test.yml
+    repos: |
+      user/repo1
+      user/repo2
+      user/repo3
+
+user/repo4:
+  - LICENSE
+  - .gitignore
+`)
+
+		const repos = await parseConfig()
+
+		assert.deepEqual(resolved(repos), [
+			['github.com/user/repo1@default', [file('.github/workflows/test.yml')]],
+			['github.com/user/repo2@default', [file('.github/workflows/test.yml')]],
+			['github.com/user/repo3@default', [file('.github/workflows/test.yml')]],
+			['github.com/user/repo4@default', [file('LICENSE'), file('.gitignore')]],
+		])
+		assert.deepEqual(warnings, [])
+	})
+
+	test('resolve group names on the lines of an inline repos list', async () => {
+		const { parseConfig, warnings } = await loadConfig(`
+repo_groups:
+  main_repos:
+    - user/repo1
+    - user/repo2
+  extra_repos:
+    - user/repo5
+    - user/repo6
+
+group:
+  - files:
+      - source: .github/workflows/build.yml
+    repos: main_repos
+
+  - files:
+      - source: README.md
+    repos: |
+      user/repo3
+      user/repo4
+
+  # Multi-line string with group references (the squash-merge bug case)
+  - files:
+      - source: LICENSE
+    repos: |
+      main_repos
+      extra_repos
+`)
+
+		const repos = await parseConfig()
+
+		assert.deepEqual(resolved(repos), [
+			['github.com/user/repo1@default', [file('.github/workflows/build.yml'), file('LICENSE')]],
+			['github.com/user/repo2@default', [file('.github/workflows/build.yml'), file('LICENSE')]],
+			['github.com/user/repo3@default', [file('README.md')]],
+			['github.com/user/repo4@default', [file('README.md')]],
+			['github.com/user/repo5@default', [file('LICENSE')]],
+			['github.com/user/repo6@default', [file('LICENSE')]],
+		])
+		assert.deepEqual(warnings, [])
+	})
+})

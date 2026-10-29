@@ -1,0 +1,49 @@
+name: Dependabot dist
+
+# Dependabot doesn't rebuild dist/, so Check dist fails whenever it updates a bundled dependency.
+# Rebuild dist/ on Dependabot's branch and start CI for the new commit
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rebuild:
+    name: Rebuild dist
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          persist-credentials: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      # The bundle doesn't need install scripts, so the updated packages run no code here
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - name: Push the rebuilt dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          if git diff --quiet -- dist/; then
+            echo '::notice::dist/ is already up to date'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add dist
+          git commit -m 'chore(deps): Rebuild dist'
+          gh auth setup-git
+          git push origin "HEAD:refs/heads/$HEAD_REF"
+          # Pushes made with GITHUB_TOKEN don't trigger workflows, so start CI for the new commit
+          gh workflow run ci.yml --ref "$HEAD_REF"

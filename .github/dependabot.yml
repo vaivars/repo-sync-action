@@ -1,10 +1,30 @@
 version: 2
 updates:
+  # Minor and patch updates are grouped into one PR per ecosystem, and new releases wait 7 days
+  # before an update is proposed. Security updates aren't delayed
   - package-ecosystem: 'npm'
     directory: '/'
     schedule:
       interval: 'weekly'
+    cooldown:
+      default-days: 7
+    groups:
+      npm:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+    commit-message:
+      prefix: 'chore'
+      include: 'scope'
   - package-ecosystem: 'github-actions'
     directory: '/'
     schedule:
       interval: 'weekly'
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+    commit-message:
+      prefix: 'ci'
+      include: 'scope'
