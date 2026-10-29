@@ -3,7 +3,7 @@
 All notable changes to this project are documented in this file. It is generated from
 [Conventional Commits](https://www.conventionalcommits.org) by [git-cliff](https://git-cliff.org).
 
-## [Unreleased](https://github.com/vaivars/repo-sync-action/compare/v1.0.10...main)
+## [2.0.0](https://github.com/vaivars/repo-sync-action/compare/v1.0.10...v2.0.0) - 2026-10-29
 
 ### Features
 
@@ -13,21 +13,19 @@ All notable changes to this project are documented in this file. It is generated
 
 - Run git without a shell and keep the token out of .git/config ([#51](https://github.com/vaivars/repo-sync-action/pull/51))
 
-### Documentation
+### Refactor
 
-- Describe how releases are made
-- Regenerate CHANGELOG.md with git-cliff
+- Declare input defaults in action.yml ([#53](https://github.com/vaivars/repo-sync-action/pull/53))
+- Migrate to TypeScript and split git and index modules ([#58](https://github.com/vaivars/repo-sync-action/pull/58))
 
 ### CI
 
 - Lint the whole repo, format YAML, and lint workflows with actionlint and zizmor ([#46](https://github.com/vaivars/repo-sync-action/pull/46))
-- Open a release PR from the Conventional Commits on main
-- Publish the release when the release PR is merged
+- Release from Conventional Commits with git-cliff ([#56](https://github.com/vaivars/repo-sync-action/pull/56))
 
 ### Miscellaneous
 
 - Restructure CI, Dependabot updates and tests ([#52](https://github.com/vaivars/repo-sync-action/pull/52))
-- Configure git-cliff for the changelog and release notes
 
 ## [1.0.10](https://github.com/vaivars/repo-sync-action/compare/v1.0.9...v1.0.10) - 2026-10-29
 
