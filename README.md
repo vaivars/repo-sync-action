@@ -269,6 +269,8 @@ One of `GH_PAT` or `GH_INSTALLATION_TOKEN` is required. All other inputs are opt
 ## Versioning
 
 Use `@v2` for the latest 2.x release, or pin an exact release tag (`@v2.x.y`) or a commit SHA.
+Each release lists its changes in the [changelog](CHANGELOG.md) and on the
+[releases page](https://github.com/vaivars/repo-sync-action/releases).
 
 v1 is deprecated and no longer updated. Its final release is `v1.0.10`.
 
@@ -322,7 +324,7 @@ The tooling is managed with [mise](https://mise.jdx.dev):
 ```sh
 mise run install       # install dependencies
 mise run lint          # eslint
-mise run lint:actions  # actionlint and zizmor on the workflows
+mise run lint:actions  # actionlint, zizmor and shellcheck on the workflows and scripts
 mise run format        # dprint
 mise run test          # build, then run the unit and local integration tests
 mise run build         # bundle src/ into dist/
@@ -331,6 +333,13 @@ mise run ci            # everything CI checks
 
 The action runs the bundled `dist/index.js`. Rebuild and commit `dist/` together with every change
 to `src/`.
+
+Releases are made from the [Conventional Commits](https://www.conventionalcommits.org) on `main`:
+a breaking change (`feat!:`) bumps the major version, `feat:` the minor and other commits the
+patch, while dependency updates alone don't make a release. Every push to `main` opens or updates a
+release PR that sets the version and regenerates `CHANGELOG.md` with
+[git-cliff](https://git-cliff.org), and merging it tags `vX.Y.Z`, moves `vX` and publishes the
+GitHub release. `scripts/release-pr.sh` previews the next release locally without changing anything.
 
 ## Credits
 
