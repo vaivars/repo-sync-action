@@ -4,7 +4,7 @@ on: pull_request
 jobs:
   dependabot:
     permissions:
-      pull-requests: read
+      pull-requests: write
     runs-on: ubuntu-latest
     if: github.event.pull_request.user.login == 'dependabot[bot]' && github.repository == 'vaivars/repo-sync-action'
     steps:

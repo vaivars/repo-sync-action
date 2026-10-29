@@ -27,10 +27,11 @@ run = [
 
 [tasks.test-ci]
 hide = true
-description = "CI task for running lint/build/test"
+description = "CI task for running lint/build/test and checking that the committed dist/ is up to date"
 run = [
     "mise run install",
     "mise run format:check",
     "mise run lint",
     "mise run test",
+    "npm run build:check",
 ]

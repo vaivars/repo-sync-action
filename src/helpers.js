@@ -1,10 +1,11 @@
 import * as core from '@actions/core'
-import { exec } from 'child_process'
+import { exec, execFile } from 'child_process'
 import fs from 'fs-extra'
 import nunjucks from 'nunjucks'
 import * as path from 'path'
 
-nunjucks.configure({ autoescape: true, trimBlocks: true, lstripBlocks: true })
+// Templates are config and code files, not HTML, so values are inserted as they are
+nunjucks.configure({ autoescape: false, trimBlocks: true, lstripBlocks: true })
 
 // From https://github.com/MartinKolarik/dedent-js/blob/master/src/index.ts - MIT © 2015 Martin Kolárik
 export function dedent(templateStrings, ...values) {
@@ -53,6 +54,25 @@ export function execCmd(command, workingDir, trimResult = true) {
 	})
 }
 
+// Runs a program without a shell and resolves with its stdout as raw bytes, with no size limit
+export function execFileBuffer(file, args, workingDir) {
+	core.debug(`EXEC: "${file} ${args.join(' ')}" IN ${workingDir}`)
+	return new Promise((resolve, reject) => {
+		execFile(
+			file,
+			args,
+			{
+				cwd: workingDir,
+				encoding: 'buffer',
+				maxBuffer: Infinity,
+			},
+			function(error, stdout) {
+				error ? reject(error) : resolve(stdout)
+			},
+		)
+	})
+}
+
 export function addTrailingSlash(str) {
 	return str.endsWith('/') ? str : str + '/'
 }
@@ -70,30 +90,18 @@ export async function write(src, dest, context) {
 	await fs.outputFile(dest, content)
 }
 
+// An exclude entry matches the path itself and everything below it, the same way fs.copy skips
+// the whole subtree of a directory that the filter rejects. Entries carry the source prefix
+function isExcluded(exclude, filePath) {
+	return exclude !== undefined
+		&& exclude.some((entry) => filePath === entry || filePath.startsWith(addTrailingSlash(entry)))
+}
+
 export function createFilterFunc(file) {
-	const exclude = file.exclude
-	return (file) => {
-		if (exclude !== undefined) {
-			// Check if file-path is one of the present filepaths in the excluded paths
-			// This has presedence over the single file, and therefore returns before the single file check
-			const filePath = file.endsWith('/')
-				? file // File item is a folder
-				: file.split('/').slice(0, -1).join('/') + '/' // File item is a file
-
-			if (exclude.includes(filePath)) {
-				core.debug(
-					`Excluding file ${file} since its path is included as one of the excluded paths.`,
-				)
-				return false
-			}
-
-			// Or if the file itself is in the excluded files
-			if (exclude.includes(file)) {
-				core.debug(
-					`Excluding file ${file} since it is explicitly added in the exclusion list.`,
-				)
-				return false
-			}
+	return (filePath) => {
+		if (isExcluded(file.exclude, filePath)) {
+			core.debug(`Excluding file ${filePath} since it or a parent directory is excluded.`)
+			return false
 		}
 		return true
 	}
@@ -112,11 +120,12 @@ export async function copy(src, dest, isDirectory, file) {
 				hidden: true,
 			})
 			for (const srcFile of srcFileList) {
-				if (!filterFunc(srcFile)) {
+				const srcPath = path.join(src, srcFile)
+				// Exclude entries carry the source prefix, like the paths fs.copy passes to the filter
+				if (!filterFunc(srcPath)) {
 					continue
 				}
 
-				const srcPath = path.join(src, srcFile)
 				const destPath = path.join(dest, srcFile)
 				await write(srcPath, destPath, file.template)
 			}
@@ -146,15 +155,12 @@ export async function copy(src, dest, isDirectory, file) {
 		})
 
 		for (const destFile of destFileList) {
-			if (destFile.startsWith('.git')) return
+			if (destFile.startsWith('.git')) continue
 			if (srcFileList.indexOf(destFile) === -1) {
 				const filePath = path.join(dest, destFile)
 				core.debug(`Found an orphaned file in the target repo - ${filePath}`)
 
-				if (
-					file.exclude !== undefined
-					&& file.exclude.includes(path.join(src, destFile))
-				) {
+				if (isExcluded(file.exclude, path.join(src, destFile))) {
 					core.debug(`Excluding file ${destFile}`)
 				} else {
 					core.debug(`Removing file ${destFile}`)
@@ -174,7 +180,7 @@ export async function getSyncedFileList(src, dest, isDirectory, file) {
 			hidden: true,
 		})
 		return srcFileList
-			.filter((srcFile) => filterFunc(srcFile))
+			.filter((srcFile) => filterFunc(path.join(src, srcFile)))
 			.map((srcFile) => path.join(dest, srcFile))
 	} else {
 		return [dest]
@@ -194,6 +200,40 @@ export function arrayEquals(array1, array2) {
 		&& array1.length === array2.length
 		&& array1.every((value, i) => value === array2[i])
 	)
+}
+
+// GitHub rejects pull request bodies longer than this
+export const PR_BODY_MAX_LENGTH = 65536
+
+// Renders the changed files of each synced source ({ header, files }) as a collapsed list. Files
+// that do not fit into maxLength characters are summed up in an "...and N more" line instead
+export function formatChangedFiles(sections, maxLength = Infinity) {
+	if (sections.length === 0) return ''
+
+	const start = '<details>\n<summary>Changed files</summary>\n<ul>\n'
+	const end = '\n</ul>\n</details>'
+	const full = start
+		+ sections.map(({ header, files }) => `<li>${header}\n\n${files.join('\n')}</li>`).join('')
+		+ end
+	if (full.length <= maxLength) return full
+
+	const total = sections.reduce((count, { files }) => count + files.length, 0)
+	const pieces = sections.flatMap(({ header, files }, i) => [
+		{ text: `${i === 0 ? '' : '</li>'}<li>${header}\n` },
+		...files.map((file) => ({ text: `\n${file}`, isFile: true })),
+	])
+	// Room for the "...and N more" line and the closing tags
+	const reserve = `<li>...and ${total} more</li>`.length + end.length
+
+	let text = start
+	let listed = 0
+	for (const piece of pieces) {
+		if (text.length + piece.text.length + reserve > maxLength) break
+		text += piece.text
+		if (piece.isFile) listed++
+	}
+
+	return `${text}${text === start ? '<li>' : '\n'}...and ${total - listed} more</li>${end}`
 }
 
 // GitHub's answer when createRef targets a branch that already exists. Octokit

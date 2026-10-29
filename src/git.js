@@ -24,7 +24,17 @@ const {
 	FORK,
 } = config
 
-import { dedent, execCmd, isReferenceExistsError } from './helpers.js'
+import {
+	dedent,
+	execCmd,
+	execFileBuffer,
+	formatChangedFiles,
+	isReferenceExistsError,
+	PR_BODY_MAX_LENGTH,
+} from './helpers.js'
+
+// setPrWarning puts this on top of an existing PR body while it is being resynced
+const PR_WARNING = '⚠️ This PR is being automatically resynced ⚠️'
 
 export default class Git {
 	constructor() {
@@ -63,9 +73,10 @@ export default class Git {
 		// Set values to current repo
 		this.repo = repo
 		this.workingDir = path.join(TMP_DIR, repo.uniqueName)
-		this.gitUrl = `https://${IS_INSTALLATION_TOKEN ? 'x-access-token:' : ''}${
+		const credentials = `${IS_INSTALLATION_TOKEN ? 'x-access-token:' : ''}${
 			IS_FINE_GRAINED ? 'oauth:' : ''
-		}${GITHUB_TOKEN}@${repo.fullName}.git`
+		}${GITHUB_TOKEN}`
+		this.gitUrl = `https://${credentials}@${repo.fullName}.git`
 
 		await this.clone()
 		await this.setIdentity()
@@ -73,11 +84,9 @@ export default class Git {
 		await this.getLastCommitSha()
 
 		if (FORK) {
-			const forkUrl = new URL(GITHUB_SERVER_URL)
-			forkUrl.username = GITHUB_TOKEN
-			forkUrl.pathname = `${FORK}/${this.repo.name}.git`
+			const forkUrl = `https://${credentials}@${repo.host}/${FORK}/${repo.name}.git`
 			await this.createFork()
-			await this.createRemote(forkUrl.toString())
+			await this.createRemote(forkUrl)
 		}
 	}
 
@@ -109,13 +118,18 @@ export default class Git {
 		let username = GIT_USERNAME
 		let email = GIT_EMAIL
 
-		if (email === undefined) {
-			if (!IS_INSTALLATION_TOKEN) {
-				const { data } = await this.github.users.getAuthenticated()
-				email = data.email
-				username = data.login
-			}
+		// Fill in only what was not given. An installation token cannot read GET /user
+		if ((!username || !email) && !IS_INSTALLATION_TOKEN) {
+			const { data } = await this.github.users.getAuthenticated()
+			username = username || data.login
+			// The profile email is null when it is private, so use the account's noreply address
+			email = email || data.email || `${data.id}+${data.login}@users.noreply.github.com`
 		}
+
+		// An installation token without GIT_USERNAME/GIT_EMAIL: git still needs an identity to
+		// create the local commits
+		username = username || 'github-actions[bot]'
+		email = email || '41898282+github-actions[bot]@users.noreply.github.com'
 
 		core.debug(`Setting git user to email: ${email}, username: ${username}`)
 
@@ -281,16 +295,21 @@ export default class Git {
 	}
 
 	async getTreeDiff(referenceTreeId, differenceTreeId) {
+		// -z prints paths verbatim, so they are not quoted and can contain spaces
 		const output = await execCmd(
-			`git diff-tree ${referenceTreeId} ${differenceTreeId} -r`,
+			`git diff-tree -z -r ${referenceTreeId} ${differenceTreeId}`,
 			this.workingDir,
+			false,
 		)
 
+		// Each entry is ":<mode> <mode> <blob> <blob> <change>" NUL "<path>" NUL
+		const fields = output.split('\0')
 		const diff = []
-		for (const line of output.split('\n')) {
-			const splitted = line.replace(/^:/, '').replace(/\t/g, ' ').split(' ')
-
-			const [newMode, previousMode, newBlob, previousBlob, change, path] = splitted
+		for (let i = 0; i + 1 < fields.length; i += 2) {
+			const [newMode, previousMode, newBlob, previousBlob, change] = fields[i]
+				.replace(/^:/, '')
+				.split(' ')
+			const path = fields[i + 1]
 
 			diff.push({
 				newMode,
@@ -308,17 +327,14 @@ export default class Git {
 	// Creates the blob objects in GitHub for the files that are not in the previous commit only
 	async uploadGitHubBlob(blob) {
 		core.debug(`Uploading GitHub Blob for blob ${blob}`)
-		const fileContent = await execCmd(
-			`git cat-file -p ${blob}`,
-			this.workingDir,
-			false,
-		)
+		// Raw bytes: decoding them as text would corrupt binary files and change the blob sha
+		const fileContent = await execFileBuffer('git', ['cat-file', 'blob', blob], this.workingDir)
 
 		// Creates the blob. We don't need to store the response because the local sha is the same and we can use it to reference the blob
 		return this.github.git.createBlob({
 			owner: this.repo.user,
 			repo: this.repo.name,
-			content: Buffer.from(fileContent).toString('base64'),
+			content: fileContent.toString('base64'),
 			encoding: 'base64',
 		})
 	}
@@ -375,7 +391,9 @@ export default class Git {
 			repo: this.repo.name,
 			ref: `heads/${SKIP_PR === false ? this.prBranch : this.baseBranch}`,
 			sha: this.lastCommitSha,
-			force: true,
+			// The PR branch is recreated on every run. The base branch must only fast-forward, so
+			// that the update fails instead of dropping commits pushed while the sync ran
+			force: SKIP_PR === false,
 		})
 		core.debug(`Commit using GitHub API completed`)
 	}
@@ -394,7 +412,8 @@ export default class Git {
 		if (IS_INSTALLATION_TOKEN) {
 			return await this.createGithubVerifiedCommits()
 		}
-		return execCmd(`git push ${this.gitUrl} --force`, this.workingDir)
+		// With SKIP_PR the commits go straight onto the base branch, which must not be force pushed
+		return execCmd(`git push ${this.gitUrl}${SKIP_PR === false ? ' --force' : ''}`, this.workingDir)
 	}
 
 	async findExistingPr() {
@@ -415,11 +434,12 @@ export default class Git {
 			owner: this.repo.user,
 			repo: this.repo.name,
 			pull_number: this.existingPr.number,
-			body: dedent(`
-				⚠️ This PR is being automatically resynced ⚠️
+			// Tagged, so that only the template is dedented and the body keeps its indentation
+			body: dedent`
+				${PR_WARNING}
 
 				${this.existingPr.body}
-			`),
+			`,
 		})
 	}
 
@@ -428,15 +448,14 @@ export default class Git {
 			owner: this.repo.user,
 			repo: this.repo.name,
 			pull_number: this.existingPr.number,
-			body: this.existingPr.body.replace(
-				'⚠️ This PR is being automatically resynced ⚠️',
-				'',
-			),
+			body: this.existingPr.body.replace(PR_WARNING, ''),
 		})
 	}
 
-	async createOrUpdatePr(changedFiles, title, description) {
-		const body = dedent(`
+	renderPrBody(changedFiles, description) {
+		// Tagged, so that only the template is dedented and the interpolated content keeps its
+		// indentation
+		return dedent`
 			${
 			description ? description + '\n\n' : ''
 		}synced local file(s) with [${GITHUB_REPOSITORY}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}).
@@ -450,7 +469,17 @@ export default class Git {
 			This PR was created automatically by the [repo-sync-action](https://github.com/vaivars/repo-sync-action) workflow run [#${
 			process.env.GITHUB_RUN_ID || 0
 		}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID || 0})
-		`)
+		`
+	}
+
+	// changedFiles are the { header, files } sections that formatChangedFiles renders
+	async createOrUpdatePr(changedFiles, title, description) {
+		// The file list gets what the rest of the body leaves of GitHub's limit, keeping room for
+		// the warning that setPrWarning adds on the next run
+		const maxLength = PR_BODY_MAX_LENGTH
+			- `${PR_WARNING}\n\n`.length
+			- this.renderPrBody('', description).length
+		const body = this.renderPrBody(formatChangedFiles(changedFiles, maxLength), description)
 
 		const prTitle = title === undefined
 			? `${COMMIT_PREFIX} synced file(s) with ${GITHUB_REPOSITORY}`
