@@ -317,8 +317,7 @@ export class GitHub {
 		await this.api.pulls.update({
 			...this.target,
 			pull_number: this.pr.number,
-			// A PR without a body fails here, as it did before
-			body: withoutPrWarning(this.pr.body!),
+			body: withoutPrWarning(this.pr.body),
 		})
 	}
 

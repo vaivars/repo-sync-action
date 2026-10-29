@@ -4,6 +4,7 @@ import { describe, test } from 'node:test'
 
 import type { TreeDiffEntry } from '../src/git-output.ts'
 import type { GitHubOptions, RepoSession, RestApi } from '../src/github.ts'
+import { PR_WARNING } from '../src/pull-request.ts'
 import type { FakeApi } from './support.ts'
 import { silentCore } from './support.ts'
 
@@ -121,6 +122,38 @@ describe('GitHub.createOrUpdatePr', () => {
 		assert.equal(update.title, 'Title')
 		assert.equal(update.pull_number, 5)
 		assert.equal(update.body, create.body)
+	})
+})
+
+describe('GitHub PR warning', () => {
+	test('does not write null into a PR without a body', async () => {
+		const { github, calls } = recordingGitHub(session({ existingPr: { number: 3, body: null } }))
+
+		await github.setPrWarning()
+
+		assert.deepEqual(calls, [
+			['pulls.update', { owner: 'owner', repo: 'repo', pull_number: 3, body: `${PR_WARNING}\n\n` }],
+		])
+	})
+
+	test('comes off a PR without a body', async () => {
+		const { github, calls } = recordingGitHub(session({ existingPr: { number: 3, body: null } }))
+
+		await github.removePrWarning()
+
+		assert.deepEqual(calls, [
+			['pulls.update', { owner: 'owner', repo: 'repo', pull_number: 3, body: '' }],
+		])
+	})
+
+	test('leaves a body without the warning as it is', async () => {
+		const { github, calls } = recordingGitHub(session({ existingPr: { number: 3, body: 'Body' } }))
+
+		await github.removePrWarning()
+
+		assert.deepEqual(calls, [
+			['pulls.update', { owner: 'owner', repo: 'repo', pull_number: 3, body: 'Body' }],
+		])
 	})
 })
 

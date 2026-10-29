@@ -68,8 +68,9 @@ describe('PR warning', () => {
 		assert.equal(withPrWarning('Line\n  indented'), `${PR_WARNING}\n\nLine\n  indented`)
 	})
 
-	test('prints a missing body as null', () => {
-		assert.equal(withPrWarning(null), `${PR_WARNING}\n\nnull`)
+	test('treats a missing body as empty', () => {
+		assert.equal(withPrWarning(null), `${PR_WARNING}\n\n`)
+		assert.equal(withoutPrWarning(null), '')
 	})
 
 	test('comes off again', () => {

@@ -59,17 +59,18 @@ export function prHead(
 	return `${fork ? fork : owner}:${branch}`
 }
 
+// A PR without a body has null for it, which counts as empty
 export function withPrWarning(body: string | null): string {
 	// Tagged, so that only the template is dedented and the body keeps its indentation
 	return dedent`
 		${PR_WARNING}
 
-		${body}
+		${body ?? ''}
 	`
 }
 
-export function withoutPrWarning(body: string): string {
-	return body.replace(PR_WARNING, '')
+export function withoutPrWarning(body: string | null): string {
+	return (body ?? '').replace(PR_WARNING, '')
 }
 
 export function renderPrBody(
