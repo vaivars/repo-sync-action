@@ -1,0 +1,42 @@
+name: Release PR
+
+# Opens or updates the release PR from the Conventional Commits on main. Merging it runs release.yml
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+# Each run works on the commit it checked out, so a newer push replaces a pending run. A running one
+# is never cancelled halfway through pushing the branch and updating the PR
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  release-pr:
+    name: Open or update the release PR
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # push the release branch
+      pull-requests: write # create the PR and the release label
+      actions: write # start CI on the release branch
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # git-cliff needs the history and the tags
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install_args: node git-cliff
+          # The job has a write token, so don't restore a cache another workflow could have saved
+          cache: false
+      - name: Open or update the release PR
+        run: scripts/release-pr.sh
+        env:
+          DRY_RUN: '0'
+          GH_TOKEN: ${{ github.token }}
