@@ -220,13 +220,14 @@ export default class Git implements RepoSession {
 		return Object.values(parseGitDiffOutput(output))
 	}
 
+	// The output is not trimmed, which would cut the spaces of a status or a path
 	async getFileStatuses(): Promise<Record<string, string>> {
-		const statusOutput = await this.exec(['status', '--porcelain'])
+		const statusOutput = await this.exec(['status', '--porcelain', '-z'], { trimResult: false })
 		return parseFileStatuses(statusOutput)
 	}
 
 	async hasChanges(): Promise<boolean> {
-		const statusOutput = await this.exec(['status', '--porcelain'])
+		const statusOutput = await this.exec(['status', '--porcelain', '-z'], { trimResult: false })
 
 		return hasStatusChanges(statusOutput)
 	}

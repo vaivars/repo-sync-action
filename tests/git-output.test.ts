@@ -87,15 +87,18 @@ describe('parseTreeDiff', () => {
 	})
 })
 
-describe('git status --porcelain', () => {
-	const output = ' M a.txt\n?? new.txt\nD  gone.txt\nR  old.txt -> renamed.txt\n'
+describe('git status --porcelain -z', () => {
+	// The paths are verbatim, and a rename is followed by the path it came from
+	const output = ' M a.txt\0?? new file.txt\0D  ünï\ncödé.txt\0R  renamed.txt\0old name.txt\0'
+		+ 'A   leading space.txt\0'
 
 	test('maps each path to its status letters', () => {
 		assert.deepEqual(parseFileStatuses(output), {
-			'a.txt': ' M ',
-			'new.txt': '?',
-			'gone.txt': 'D  ',
-			'renamed.txt': 'R',
+			'a.txt': ' M',
+			'new file.txt': '??',
+			'ünï\ncödé.txt': 'D ',
+			'renamed.txt': 'R ',
+			' leading space.txt': 'A ',
 		})
 	})
 

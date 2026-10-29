@@ -7,6 +7,7 @@ import type { AddressInfo } from 'node:net'
 import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
 
+import { changedFiles } from '../src/changes.ts'
 import type { Config } from '../src/config.ts'
 import type { Command, FakeApi } from './support.ts'
 import { gitIn, loadConfig, loadGit, makeTmpDir, prGit, silentCore } from './support.ts'
@@ -467,6 +468,36 @@ describe('Git.uploadGitHubBlob', () => {
 			assert.equal(gitBlobSha(Buffer.from(blobs[0].content, 'base64')), sha)
 		})
 	}
+})
+
+describe('Git.getFileStatuses', () => {
+	test('gives files with spaces and non-ASCII characters in their path their status', async () => {
+		const dir = await makeRepo([{
+			'changed file.txt': 'old',
+			'removed ünï.txt': 'gone',
+			'old name.txt': 'renamed content\n'.repeat(20),
+		}])
+		await fs.outputFile(path.join(dir, 'changed file.txt'), 'new')
+		await fs.remove(path.join(dir, 'removed ünï.txt'))
+		await fs.move(path.join(dir, 'old name.txt'), path.join(dir, 'dir with space/new name.txt'))
+		await fs.outputFile(path.join(dir, 'ädded "quoted".txt'), 'added')
+		gitIn(dir, 'add', '-A')
+		const git = await loadGit()
+		git.workingDir = dir
+
+		const { files } = changedFiles(
+			{ source: 'src/', dest: '.', isDirectory: true },
+			['changed file.txt', 'removed ünï.txt', 'ädded "quoted".txt'],
+			await git.getFileStatuses(),
+		)
+
+		assert.deepEqual(files, [
+			'`changed file.txt` - updated',
+			'`removed ünï.txt` - deleted',
+			'`ädded "quoted".txt` - created',
+		])
+		assert.equal(await git.hasChanges(), true)
+	})
 })
 
 describe('Git.getTreeDiff', () => {

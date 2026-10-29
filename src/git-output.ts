@@ -1,5 +1,3 @@
-import { parse } from '@putout/git-status-porcelain'
-
 // One entry of git diff-tree between a commit's tree and its parent's
 export interface TreeDiffEntry {
 	newMode: string
@@ -73,15 +71,38 @@ export function parseTreeDiff(output: string): TreeDiffEntry[] {
 	return diff
 }
 
-// The git status --porcelain status letters of each changed file, by its path
+// One entry of git status --porcelain -z: its two status letters and its path
+export interface StatusEntry {
+	status: string
+	path: string
+}
+
+// The entries of git status --porcelain -z output. -z prints the paths verbatim, without the quotes
+// and escapes that git puts around paths with spaces or non-ASCII characters otherwise
+export function parseStatus(statusOutput: string): StatusEntry[] {
+	// Each entry is "XY <path>" NUL, and a rename or copy is followed by "<from path>" NUL
+	const fields = statusOutput.split('\0')
+	const entries = []
+	for (let i = 0; i < fields.length; i++) {
+		if (fields[i] === '') continue
+
+		const status = fields[i].slice(0, 2)
+		entries.push({ status, path: fields[i].slice(3) })
+		if (/[RC]/.test(status)) i++
+	}
+
+	return entries
+}
+
+// The git status --porcelain -z status letters of each changed file, by its path
 export function parseFileStatuses(statusOutput: string): Record<string, string> {
-	return parse(statusOutput).reduce((acc: Record<string, string>, entry) => {
-		acc[entry.name] = entry.mode
+	return parseStatus(statusOutput).reduce((acc: Record<string, string>, entry) => {
+		acc[entry.path] = entry.status
 		return acc
 	}, {})
 }
 
-// Whether git status --porcelain lists any changes
+// Whether git status --porcelain -z lists any changes
 export function hasStatusChanges(statusOutput: string): boolean {
-	return parse(statusOutput).length !== 0
+	return parseStatus(statusOutput).length !== 0
 }
