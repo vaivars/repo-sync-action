@@ -1,11 +1,77 @@
 import * as core from '@actions/core'
 import { exec, execFile } from 'child_process'
 import fs from 'fs-extra'
-import nunjucks from 'nunjucks'
+import { Liquid } from 'liquidjs'
 import * as path from 'path'
 
-// Templates are config and code files, not HTML, so values are inserted as they are
-nunjucks.configure({ autoescape: false, trimBlocks: true, lstripBlocks: true })
+// The target repository clones live in TMP_DIR. index.js passes it in, since importing config.js
+// here would read the action inputs
+let tmpDir
+
+export function setTmpDir(dir) {
+	tmpDir = path.resolve(dir)
+}
+
+function realpathOrSelf(file) {
+	try {
+		return fs.realpathSync(file)
+	} catch {
+		return file
+	}
+}
+
+// Paths that templates and sync sources must not read: git metadata, which can hold credentials,
+// and the clones of the target repositories in TMP_DIR
+export function isProtectedPath(file) {
+	const resolved = path.resolve(file)
+	const candidates = [resolved, realpathOrSelf(resolved)]
+	const tmpDirs = tmpDir === undefined ? [] : [tmpDir, realpathOrSelf(tmpDir)]
+
+	return candidates.some((candidate) =>
+		candidate.split(path.sep).includes('.git')
+		|| tmpDirs.some((dir) => candidate === dir || candidate.startsWith(dir + path.sep))
+	)
+}
+
+function assertUnprotected(file) {
+	if (isProtectedPath(file)) throw new Error(`Templates can't read ${file}`)
+}
+
+// LiquidJS' own file system, with protected paths treated as missing and never read
+const liquidFs = new Liquid().options.fs
+const templateFs = {
+	...liquidFs,
+	exists: async (file) => !isProtectedPath(file) && liquidFs.exists(file),
+	existsSync: (file) => !isProtectedPath(file) && liquidFs.existsSync(file),
+	readFile: async (file) => {
+		assertUnprotected(file)
+		return liquidFs.readFile(file)
+	},
+	readFileSync: (file) => {
+		assertUnprotected(file)
+		return liquidFs.readFileSync(file)
+	},
+}
+
+// Templates may come from anyone who can change the source repository, so they are rendered
+// without access to JavaScript objects, can only load files below the working directory outside
+// of protected paths, and are limited in what they can parse, allocate and spend rendering
+const liquid = new Liquid({
+	root: process.cwd(),
+	fs: templateFs,
+	cache: true,
+	strictFilters: true,
+	// Already the LiquidJS default, set explicitly so templates never read inherited properties
+	ownPropertyOnly: true,
+	// Empty strings and 0 are false, as they were with Nunjucks in v1
+	jsTruthy: true,
+	// Values are inserted as they are, since templates are config and code files, not HTML.
+	// Arrays print comma separated, as they did with Nunjucks in v1
+	outputEscape: (value) => (Array.isArray(value) ? value.join(',') : value),
+	parseLimit: 10_000_000,
+	memoryLimit: 100_000_000,
+	renderLimit: 30_000,
+})
 
 // From https://github.com/MartinKolarik/dedent-js/blob/master/src/index.ts - MIT © 2015 Martin Kolárik
 export function dedent(templateStrings, ...values) {
@@ -86,7 +152,7 @@ export async function write(src, dest, context) {
 	if (typeof context !== 'object') {
 		context = {}
 	}
-	const content = nunjucks.render(src, context)
+	const content = await liquid.renderFile(src, context)
 	await fs.outputFile(dest, content)
 }
 

@@ -61,7 +61,7 @@ inputs:
     required: false
   TMP_DIR:
     description: |
-      Working directory for the clones. Defaults to tmp-<timestamp>
+      Working directory for the clones. Files in it are never synced or read by templates. Defaults to $RUNNER_TEMP/repo-sync-<timestamp>
     required: false
   DRY_RUN:
     description: |

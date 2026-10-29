@@ -26,7 +26,7 @@ and opens a pull request there with the changes (or updates the one it opened be
        runs-on: ubuntu-latest
        steps:
          - uses: actions/checkout@v7
-         - uses: vaivars/repo-sync-action@v1
+         - uses: vaivars/repo-sync-action@v2
            with:
              GH_PAT: ${{ secrets.GH_PAT }}
    ```
@@ -116,8 +116,7 @@ owner/repo:
 
 ### Templates
 
-Templates are rendered with [Nunjucks](https://mozilla.github.io/nunjucks/templating.html), which
-uses Jinja-style syntax:
+Templates use [Liquid](https://liquidjs.com/tutorials/intro-to-liquid.html) syntax:
 
 ```yml
 owner/repo:
@@ -134,10 +133,19 @@ owner/repo:
 ```
 
 - Use `template: true` for templates without variables.
-- `{% extends './base.yml' %}` and `{% include %}` paths that start with `./` are resolved relative
-  to the template.
-- GitHub Actions expressions like `${{ secrets.TOKEN }}` use the same braces as Nunjucks. Wrap them
-  in `{% raw %}…{% endraw %}` to keep them in a templated workflow file.
+- `{% layout %}`, `{% include %}` and `{% render %}` paths that start with `./` are resolved relative
+  to the template. Other paths are relative to the working directory, normally the root of the
+  checked-out repository.
+- Templates are sandboxed. They can't access JavaScript objects or read files outside the working
+  directory, inside `.git` directories or in `TMP_DIR`. Unknown tags and filters fail the run, and
+  parsing, memory use and render time are limited.
+- Values are inserted as they are, without HTML escaping, and arrays print comma separated. Use
+  `| escape` where you need escaping.
+- Empty strings and `0` are false in conditions.
+- Whitespace is kept as written. Use `{%-` and `-%}` to trim it around tags.
+- GitHub Actions expressions like `${{ secrets.TOKEN }}` use the same braces as Liquid. Wrap them in
+  `{% raw %}…{% endraw %}` to keep them in a templated workflow file. `{% endraw %}` can't take a
+  `-`.
 
 ### Groups
 
@@ -210,7 +218,7 @@ Alternatives to this flow:
 A workflow step that customizes the pull request:
 
 ```yml
-- uses: vaivars/repo-sync-action@v1
+- uses: vaivars/repo-sync-action@v2
   with:
     GH_PAT: ${{ secrets.GH_PAT }}
     PR_LABELS: |
@@ -226,31 +234,31 @@ A workflow step that customizes the pull request:
 
 One of `GH_PAT` or `GH_INSTALLATION_TOKEN` is required. All other inputs are optional.
 
-| Input                   | Description                                                                                                                 | Default                      |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
-| `GH_PAT`                | Personal access token, classic or fine-grained                                                                              |                              |
-| `GH_INSTALLATION_TOKEN` | GitHub App installation token, used when `GH_PAT` isn't set                                                                 |                              |
-| `IS_FINE_GRAINED`       | Set to `true` when `GH_PAT` is a fine-grained token                                                                         | `false`                      |
-| `CONFIG_PATH`           | Path to the sync configuration                                                                                              | `.github/sync.yml`           |
-| `PR_LABELS`             | Pull request labels, one per line. `false` adds none                                                                        | `sync`                       |
-| `PR_BODY`               | Extra text for the pull request description                                                                                 |                              |
-| `ASSIGNEES`             | Users to assign to the pull request, one per line                                                                           |                              |
-| `REVIEWERS`             | Users to request a review from, one per line                                                                                |                              |
-| `TEAM_REVIEWERS`        | Teams to request a review from, one per line                                                                                |                              |
-| `COMMIT_PREFIX`         | Prefix for commit messages and the pull request title                                                                       | `🔄`                         |
-| `COMMIT_BODY`           | Text appended to every commit message after a blank line                                                                    |                              |
-| `COMMIT_EACH_FILE`      | One commit per file entry instead of one commit for everything                                                              | `true`                       |
-| `ORIGINAL_MESSAGE`      | When a push of a single commit triggers the run, reuse its message for commits and its body as the pull request description | `false`                      |
-| `COMMIT_AS_PR_TITLE`    | With `ORIGINAL_MESSAGE`, use the first line of that message as the pull request title                                       | `false`                      |
-| `GIT_USERNAME`          | Commit author name                                                                                                          | `GH_PAT` owner               |
-| `GIT_EMAIL`             | Commit author email                                                                                                         | `GH_PAT` owner               |
-| `BRANCH_PREFIX`         | Prefix for the pull request branch. `SOURCE_REPO_NAME` is replaced with the source repository name                          | `repo-sync/SOURCE_REPO_NAME` |
-| `OVERWRITE_EXISTING_PR` | Update an open sync pull request instead of opening a new one                                                               | `true`                       |
-| `SKIP_PR`               | Commit straight to the target branch without a pull request                                                                 | `false`                      |
-| `FORK`                  | Account whose fork the changes are pushed to before opening the pull request                                                |                              |
-| `DRY_RUN`               | Do everything except push and open pull requests                                                                            | `false`                      |
-| `TMP_DIR`               | Working directory for the clones                                                                                            | `tmp-<timestamp>`            |
-| `SKIP_CLEANUP`          | Keep `TMP_DIR` after the run                                                                                                | `false`                      |
+| Input                   | Description                                                                                                                 | Default                              |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `GH_PAT`                | Personal access token, classic or fine-grained                                                                              |                                      |
+| `GH_INSTALLATION_TOKEN` | GitHub App installation token, used when `GH_PAT` isn't set                                                                 |                                      |
+| `IS_FINE_GRAINED`       | Set to `true` when `GH_PAT` is a fine-grained token                                                                         | `false`                              |
+| `CONFIG_PATH`           | Path to the sync configuration                                                                                              | `.github/sync.yml`                   |
+| `PR_LABELS`             | Pull request labels, one per line. `false` adds none                                                                        | `sync`                               |
+| `PR_BODY`               | Extra text for the pull request description                                                                                 |                                      |
+| `ASSIGNEES`             | Users to assign to the pull request, one per line                                                                           |                                      |
+| `REVIEWERS`             | Users to request a review from, one per line                                                                                |                                      |
+| `TEAM_REVIEWERS`        | Teams to request a review from, one per line                                                                                |                                      |
+| `COMMIT_PREFIX`         | Prefix for commit messages and the pull request title                                                                       | `🔄`                                 |
+| `COMMIT_BODY`           | Text appended to every commit message after a blank line                                                                    |                                      |
+| `COMMIT_EACH_FILE`      | One commit per file entry instead of one commit for everything                                                              | `true`                               |
+| `ORIGINAL_MESSAGE`      | When a push of a single commit triggers the run, reuse its message for commits and its body as the pull request description | `false`                              |
+| `COMMIT_AS_PR_TITLE`    | With `ORIGINAL_MESSAGE`, use the first line of that message as the pull request title                                       | `false`                              |
+| `GIT_USERNAME`          | Commit author name                                                                                                          | `GH_PAT` owner                       |
+| `GIT_EMAIL`             | Commit author email                                                                                                         | `GH_PAT` owner                       |
+| `BRANCH_PREFIX`         | Prefix for the pull request branch. `SOURCE_REPO_NAME` is replaced with the source repository name                          | `repo-sync/SOURCE_REPO_NAME`         |
+| `OVERWRITE_EXISTING_PR` | Update an open sync pull request instead of opening a new one                                                               | `true`                               |
+| `SKIP_PR`               | Commit straight to the target branch without a pull request                                                                 | `false`                              |
+| `FORK`                  | Account whose fork the changes are pushed to before opening the pull request                                                |                                      |
+| `DRY_RUN`               | Do everything except push and open pull requests                                                                            | `false`                              |
+| `TMP_DIR`               | Working directory for the clones. Files in it are never synced or read by templates                                         | `$RUNNER_TEMP/repo-sync-<timestamp>` |
+| `SKIP_CLEANUP`          | Keep `TMP_DIR` after the run                                                                                                | `false`                              |
 
 ### Outputs
 
@@ -260,7 +268,48 @@ One of `GH_PAT` or `GH_INSTALLATION_TOKEN` is required. All other inputs are opt
 
 ## Versioning
 
-Use `@v1` for the latest 1.x release, or pin an exact release tag (`@v1.x.y`) or a commit SHA.
+Use `@v2` for the latest 2.x release, or pin an exact release tag (`@v2.x.y`) or a commit SHA.
+
+v1 is deprecated and no longer updated. Its final release is `v1.0.10`.
+
+## Migrating from v1
+
+v2 renders templates with LiquidJS instead of Nunjucks, because Nunjucks templates can run any
+JavaScript with the action's token. Inputs and the rest of `sync.yml` are unchanged.
+
+Plain `{{ variable }}` output is unchanged. Tags, filters and expressions need these changes:
+
+| v1 (Nunjucks)                          | v2 (Liquid)                                           |
+| -------------------------------------- | ----------------------------------------------------- |
+| `{% extends './base.yml' %}`           | `{% layout './base.yml' %}`                           |
+| `{% set x = 1 %}`                      | `{% assign x = 1 %}`                                  |
+| `{# comment #}`                        | `{% comment %}…{% endcomment %}` or `{% # comment %}` |
+| `{{ a + b }}`                          | `{{ a \| plus: b }}`                                  |
+| `{{ a if cond else b }}`               | `{% if cond %}{{ a }}{% else %}{{ b }}{% endif %}`    |
+| `{% if x is defined %}`                | `{% if x != nil %}`                                   |
+| `{% if x in list %}`                   | `{% if list contains x %}`                            |
+| `{% for i in range(3) %}`              | `{% for i in (0..2) %}`                               |
+| `loop.index`, `loop.first`             | `forloop.index`, `forloop.first`                      |
+| `{{ s \| upper }}`, `{{ s \| lower }}` | `{{ s \| upcase }}`, `{{ s \| downcase }}`            |
+| `{{ list \| length }}`                 | `{{ list \| size }}`                                  |
+| `{{ x \| default('y') }}`              | `{{ x \| default: 'y' }}`                             |
+| `{% macro %}`                          | `{% render './partial.txt', arg: value %}`            |
+| `{{ x \| safe }}`                      | `{{ x }}`                                             |
+
+Unknown tags and filters fail the run with an error. These don't, and render differently without
+any error, so search your templates for them before upgrading:
+
+- **Inline `if`:** `{{ a if cond else b }}` always renders `a`.
+- **`is defined` / `is not defined`:** the test is ignored, so `{% if x is not defined %}` is true
+  when `x` _is_ set.
+- **`in`:** `{% if x in list %}` is always true.
+- **`range()` and `loop.*`:** render nothing.
+- **`{# comments #}`:** are copied into the output as text.
+- **`==`:** compares strictly, so `version: 1` from `sync.yml` doesn't equal `"1"`.
+- **`default`:** replaces `false`, `0` and empty strings too. In v1 it only replaced missing
+  values.
+- **Whitespace:** v1 removed the line break after block tags and the indentation before them. v2
+  keeps it; trim it with `{%-` and `-%}`.
 
 ## Development
 

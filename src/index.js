@@ -4,7 +4,15 @@ import * as path from 'path'
 import { pathToFileURL } from 'url'
 
 import Git from './git.js'
-import { addTrailingSlash, copy, getSyncedFileList, pathIsDirectory, remove } from './helpers.js'
+import {
+	addTrailingSlash,
+	copy,
+	getSyncedFileList,
+	isProtectedPath,
+	pathIsDirectory,
+	remove,
+	setTmpDir,
+} from './helpers.js'
 
 import { default as config, parseConfig } from './config.js'
 
@@ -26,6 +34,8 @@ const {
 } = config
 
 export async function run() {
+	setTmpDir(TMP_DIR)
+
 	const git = new Git()
 
 	const repos = await parseConfig()
@@ -179,6 +189,10 @@ async function processRepository(item, git, prUrls) {
 }
 
 async function syncFile(file, git, modified) {
+	if (isProtectedPath(file.source)) {
+		return core.warning(`Source ${file.source} is inside .git or TMP_DIR and is not synced`)
+	}
+
 	const fileExists = fs.existsSync(file.source)
 	if (fileExists === false) {
 		return core.warning(`Source ${file.source} not found`)
