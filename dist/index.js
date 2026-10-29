@@ -50122,9 +50122,13 @@ const {
 
 
 
+
 const REPLACE_DEFAULT = true
 const TEMPLATE_DEFAULT = false
 const DELETE_ORPHANED_DEFAULT = false
+
+// Clones go to the runner's temporary directory, outside the workspace that templates can read
+const tmpDirIn = (parent) => external_path_.join(parent, `repo-sync-${Date.now().toString()}`)
 
 let config_context
 
@@ -50164,7 +50168,7 @@ try {
 		ASSIGNEES: { type: 'array' },
 		REVIEWERS: { type: 'array' },
 		TEAM_REVIEWERS: { type: 'array' },
-		TMP_DIR: { default: `tmp-${Date.now().toString()}` },
+		TMP_DIR: { default: tmpDirIn(process.env.RUNNER_TEMP || external_os_namespaceObject.tmpdir()) },
 		DRY_RUN: { type: 'boolean', default: false },
 		SKIP_CLEANUP: { type: 'boolean', default: false },
 		OVERWRITE_EXISTING_PR: { type: 'boolean', default: true },
@@ -50185,7 +50189,7 @@ try {
 	core_debug(JSON.stringify(config_context, null, 2))
 
 	while (fs_extra_lib.existsSync(config_context.TMP_DIR)) {
-		config_context.TMP_DIR = `tmp-${Date.now().toString()}`
+		config_context.TMP_DIR = tmpDirIn(external_path_.dirname(config_context.TMP_DIR))
 		warning(`TEMP_DIR already exists. Using "${config_context.TMP_DIR}" now.`)
 	}
 } catch (err) {
@@ -50392,15 +50396,73 @@ var liquid_node = __nccwpck_require__(8694);
 
 
 
+// The target repository clones live in TMP_DIR. index.js passes it in, since importing config.js
+// here would read the action inputs
+let tmpDir
+
+function setTmpDir(dir) {
+	tmpDir = external_path_.resolve(dir)
+}
+
+function realpathOrSelf(file) {
+	try {
+		return fs_extra_lib.realpathSync(file)
+	} catch {
+		return file
+	}
+}
+
+// Paths that templates and sync sources must not read: git metadata, which can hold credentials,
+// and the clones of the target repositories in TMP_DIR
+function isProtectedPath(file) {
+	const resolved = external_path_.resolve(file)
+	const candidates = [resolved, realpathOrSelf(resolved)]
+	const tmpDirs = tmpDir === undefined ? [] : [tmpDir, realpathOrSelf(tmpDir)]
+
+	return candidates.some((candidate) =>
+		candidate.split(external_path_.sep).includes('.git')
+		|| tmpDirs.some((dir) => candidate === dir || candidate.startsWith(dir + external_path_.sep))
+	)
+}
+
+function assertUnprotected(file) {
+	if (isProtectedPath(file)) throw new Error(`Templates can't read ${file}`)
+}
+
+// LiquidJS' own file system, with protected paths treated as missing and never read
+const liquidFs = new liquid_node/* Liquid */.HX().options.fs
+const templateFs = {
+	...liquidFs,
+	exists: async (file) => !isProtectedPath(file) && liquidFs.exists(file),
+	existsSync: (file) => !isProtectedPath(file) && liquidFs.existsSync(file),
+	readFile: async (file) => {
+		assertUnprotected(file)
+		return liquidFs.readFile(file)
+	},
+	readFileSync: (file) => {
+		assertUnprotected(file)
+		return liquidFs.readFileSync(file)
+	},
+}
+
 // Templates may come from anyone who can change the source repository, so they are rendered
-// without access to JavaScript objects and can only load files below the working directory.
-// Values are inserted as they are, since templates are config and code files, not HTML
+// without access to JavaScript objects, can only load files below the working directory outside
+// of protected paths, and are limited in what they can parse, allocate and spend rendering
 const liquid = new liquid_node/* Liquid */.HX({
 	root: process.cwd(),
+	fs: templateFs,
+	cache: true,
 	strictFilters: true,
+	// Already the LiquidJS default, set explicitly so templates never read inherited properties
 	ownPropertyOnly: true,
 	// Empty strings and 0 are false, as they were with Nunjucks in v1
 	jsTruthy: true,
+	// Values are inserted as they are, since templates are config and code files, not HTML.
+	// Arrays print comma separated, as they did with Nunjucks in v1
+	outputEscape: (value) => (Array.isArray(value) ? value.join(',') : value),
+	parseLimit: 10_000_000,
+	memoryLimit: 100_000_000,
+	renderLimit: 30_000,
 })
 
 // From https://github.com/MartinKolarik/dedent-js/blob/master/src/index.ts - MIT © 2015 Martin Kolárik
@@ -51295,6 +51357,8 @@ const {
 } = config
 
 async function run() {
+	setTmpDir(src_TMP_DIR)
+
 	const git = new Git()
 
 	const repos = await parseConfig()
@@ -51448,6 +51512,10 @@ async function processRepository(item, git, prUrls) {
 }
 
 async function syncFile(file, git, modified) {
+	if (isProtectedPath(file.source)) {
+		return warning(`Source ${file.source} is inside .git or TMP_DIR and is not synced`)
+	}
+
 	const fileExists = external_fs_.existsSync(file.source)
 	if (fileExists === false) {
 		return warning(`Source ${file.source} not found`)
