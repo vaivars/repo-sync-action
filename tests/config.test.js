@@ -1,7 +1,10 @@
+import fs from 'fs-extra'
+import * as yaml from 'js-yaml'
 import assert from 'node:assert/strict'
+import path from 'node:path'
 import { describe, test } from 'node:test'
 
-import { loadConfig } from './support.js'
+import { loadConfig, ROOT_DIR } from './support.js'
 
 describe('config', () => {
 	for (const [value, expected] of [[undefined, false], ['false', false], ['true', true]]) {
@@ -170,5 +173,65 @@ group:
 			['github.com/user/repo6@default', [file('LICENSE')]],
 		])
 		assert.deepEqual(warnings, [])
+	})
+})
+
+describe('action.yml', () => {
+	// Inputs whose default depends on the token or the runner, or that have none
+	const WITHOUT_DEFAULT = [
+		'GH_PAT',
+		'GH_INSTALLATION_TOKEN',
+		'PR_BODY',
+		'ASSIGNEES',
+		'REVIEWERS',
+		'TEAM_REVIEWERS',
+		'COMMIT_BODY',
+		'GIT_EMAIL',
+		'GIT_USERNAME',
+		'TMP_DIR',
+		'FORK',
+	]
+
+	async function actionInputs() {
+		const action = yaml.load(await fs.readFile(path.join(ROOT_DIR, 'action.yml'), 'utf8'))
+		return action.inputs
+	}
+
+	test('declares a default for every input except those without a fixed one', async () => {
+		const inputs = await actionInputs()
+		const withoutDefault = Object.keys(inputs).filter((key) => inputs[key].default === undefined)
+
+		assert.deepEqual(withoutDefault.sort(), [...WITHOUT_DEFAULT].sort())
+		for (const [key, input] of Object.entries(inputs)) {
+			if (input.default !== undefined) assert.equal(typeof input.default, 'string', key)
+		}
+	})
+
+	test('declares the same defaults the code falls back to', async () => {
+		const inputs = await actionInputs()
+		const declared = Object.fromEntries(
+			Object.entries(inputs)
+				.filter(([, input]) => input.default !== undefined)
+				.map(([key, input]) => [key, input.default]),
+		)
+
+		// Without the inputs set, the code's own defaults apply. With them, the values the runner passes
+		const unset = Object.fromEntries(Object.keys(declared).map((key) => [key, undefined]))
+		const { context: fromCode } = await loadConfig('', unset)
+		const { context: fromAction } = await loadConfig('', declared)
+
+		for (const key of Object.keys(declared)) {
+			assert.deepEqual(fromAction[key], fromCode[key], key)
+		}
+	})
+
+	test('only declares inputs the code reads', async () => {
+		const inputs = await actionInputs()
+		const { context } = await loadConfig('')
+		const tokens = ['GH_PAT', 'GH_INSTALLATION_TOKEN']
+
+		for (const key of Object.keys(inputs)) {
+			if (!tokens.includes(key)) assert.ok(key in context, key)
+		}
 	})
 })

@@ -13,44 +13,49 @@ inputs:
     required: false
   CONFIG_PATH:
     description: |
-      Path to the sync configuration file. Defaults to .github/sync.yml
+      Path to the sync configuration file
     required: false
+    default: '.github/sync.yml'
   IS_FINE_GRAINED:
     description: |
-      Set to true when GH_PAT is a fine-grained token. Defaults to false
+      Set to true when GH_PAT is a fine-grained token
     required: false
+    default: 'false'
   PR_LABELS:
     description: |
-      Labels to add to the pull request, one per line. Set to false to add none. Defaults to sync
+      Labels to add to the pull request, one per line. Set to false to add none
     required: false
+    default: 'sync'
   PR_BODY:
     description: |
-      Extra text for the pull request description. Defaults to none
+      Extra text for the pull request description
     required: false
   ASSIGNEES:
     description: |
-      Users to assign to the pull request, one per line. Defaults to none
+      Users to assign to the pull request, one per line
     required: false
   REVIEWERS:
     description: |
-      Users to request a review from, one per line. Defaults to none
+      Users to request a review from, one per line
     required: false
   TEAM_REVIEWERS:
     description: |
-      Teams to request a review from, one per line. Defaults to none
+      Teams to request a review from, one per line
     required: false
   COMMIT_PREFIX:
     description: |
-      Prefix for commit messages and the pull request title. Defaults to 🔄
+      Prefix for commit messages and the pull request title
     required: false
+    default: '🔄'
   COMMIT_BODY:
     description: |
-      Text appended to every commit message after a blank line. Defaults to none
+      Text appended to every commit message after a blank line
     required: false
   COMMIT_EACH_FILE:
     description: |
-      Create one commit per file entry instead of one commit for everything. Defaults to true
+      Create one commit per file entry instead of one commit for everything
     required: false
+    default: 'true'
   GIT_EMAIL:
     description: |
       Commit author email. Defaults to the email of the GH_PAT owner
@@ -65,35 +70,42 @@ inputs:
     required: false
   DRY_RUN:
     description: |
-      Do everything except push and open pull requests. Defaults to false
+      Do everything except push and open pull requests
     required: false
+    default: 'false'
   SKIP_CLEANUP:
     description: |
-      Keep TMP_DIR after the run (useful for debugging). Defaults to false
+      Keep TMP_DIR after the run (useful for debugging)
     required: false
+    default: 'false'
   OVERWRITE_EXISTING_PR:
     description: |
-      Update an open sync pull request instead of opening a new one. Defaults to true
+      Update an open sync pull request instead of opening a new one
     required: false
+    default: 'true'
   ORIGINAL_MESSAGE:
     description: |
-      When a push of a single commit triggers the run, reuse its message for commits and its body as the pull request description. Defaults to false
+      When a push of a single commit triggers the run, reuse its message for commits and its body as the pull request description
     required: false
+    default: 'false'
   COMMIT_AS_PR_TITLE:
     description: |
-      With ORIGINAL_MESSAGE, use the first line of that message as the pull request title. Defaults to false
+      With ORIGINAL_MESSAGE, use the first line of that message as the pull request title
     required: false
+    default: 'false'
   SKIP_PR:
     description: |
-      Commit straight to the target branch without a pull request. Defaults to false
+      Commit straight to the target branch without a pull request
     required: false
+    default: 'false'
   BRANCH_PREFIX:
     description: |
-      Prefix for the pull request branch. SOURCE_REPO_NAME is replaced with the source repository name. Defaults to repo-sync/SOURCE_REPO_NAME
+      Prefix for the pull request branch. SOURCE_REPO_NAME is replaced with the source repository name
     required: false
+    default: 'repo-sync/SOURCE_REPO_NAME'
   FORK:
     description: |
-      Account whose fork the changes are pushed to before opening the pull request. The token must belong to this account. Defaults to none
+      Account whose fork the changes are pushed to before opening the pull request. The token must belong to this account
     required: false
 
 outputs:
