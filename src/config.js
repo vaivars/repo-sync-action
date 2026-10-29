@@ -37,6 +37,8 @@ try {
 		IS_INSTALLATION_TOKEN: isInstallationToken,
 	}
 
+	// The defaults are declared in action.yml, which the runner applies. The same values are repeated
+	// here for runs outside of Actions; tests/config.test.js checks that the two agree
 	const inputs = {
 		GIT_EMAIL: {},
 		GIT_USERNAME: {},
