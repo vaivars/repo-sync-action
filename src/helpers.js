@@ -1,5 +1,5 @@
 import * as core from '@actions/core'
-import { exec, execFile } from 'child_process'
+import * as childProcess from 'child_process'
 import fs from 'fs-extra'
 import { Liquid } from 'liquidjs'
 import * as path from 'path'
@@ -104,38 +104,39 @@ export function dedent(templateStrings, ...values) {
 	return string
 }
 
-export function execCmd(command, workingDir, trimResult = true) {
-	core.debug(`EXEC: "${command}" IN ${workingDir}`)
-	return new Promise((resolve, reject) => {
-		exec(
-			command,
-			{
-				cwd: workingDir,
-				maxBuffer: 1024 * 1024 * 4,
-			},
-			function(error, stdout) {
-				error ? reject(error) : resolve(trimResult ? stdout.trim() : stdout)
-			},
-		)
-	})
-}
-
-// Runs a program without a shell and resolves with its stdout as raw bytes, with no size limit
-export function execFileBuffer(file, args, workingDir) {
+// Runs a program without a shell, so that each argument reaches it as one literal value
+function runFile(file, args, workingDir, options) {
 	core.debug(`EXEC: "${file} ${args.join(' ')}" IN ${workingDir}`)
 	return new Promise((resolve, reject) => {
-		execFile(
+		childProcess.execFile(
 			file,
 			args,
 			{
 				cwd: workingDir,
-				encoding: 'buffer',
-				maxBuffer: Infinity,
+				...options,
 			},
 			function(error, stdout) {
 				error ? reject(error) : resolve(stdout)
 			},
 		)
+	})
+}
+
+// Runs a program without a shell and resolves with its stdout as text, trimmed unless trimResult
+// is false. The variables in env are added to the program's environment
+export async function execFile(file, args, workingDir, { trimResult = true, env } = {}) {
+	const stdout = await runFile(file, args, workingDir, {
+		maxBuffer: 1024 * 1024 * 4,
+		env: env === undefined ? undefined : { ...process.env, ...env },
+	})
+	return trimResult ? stdout.trim() : stdout
+}
+
+// Runs a program without a shell and resolves with its stdout as raw bytes, with no size limit
+export function execFileBuffer(file, args, workingDir) {
+	return runFile(file, args, workingDir, {
+		encoding: 'buffer',
+		maxBuffer: Infinity,
 	})
 }
 

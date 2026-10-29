@@ -26,7 +26,7 @@ const {
 
 import {
 	dedent,
-	execCmd,
+	execFile,
 	execFileBuffer,
 	formatChangedFiles,
 	isReferenceExistsError,
@@ -62,6 +62,12 @@ export default class Git {
 
 		// We only need the rest client
 		this.github = octokit.rest
+	}
+
+	// Runs git in the clone. Values from sync.yml and the inputs are passed as separate arguments,
+	// never through a shell
+	exec(args, options) {
+		return execFile('git', args, this.workingDir, options)
 	}
 
 	async initRepo(repo) {
@@ -101,17 +107,23 @@ export default class Git {
 	}
 
 	async createRemote(forkUrl) {
-		return execCmd(`git remote add fork ${forkUrl}`, this.workingDir)
+		return this.exec(['remote', 'add', 'fork', forkUrl])
 	}
 
 	async clone() {
 		core.debug(`Cloning ${this.repo.fullName} into ${this.workingDir}`)
 
-		return execCmd(
-			`git clone --depth 1 ${
-				this.repo.branch !== 'default' ? '--branch "' + this.repo.branch + '"' : ''
-			} ${this.gitUrl} ${this.workingDir}`,
-		)
+		const branch = this.repo.branch !== 'default' ? ['--branch', this.repo.branch] : []
+		// Runs where the action runs, since the clone does not exist yet
+		return execFile('git', [
+			'clone',
+			'--depth',
+			'1',
+			...branch,
+			'--',
+			this.gitUrl,
+			this.workingDir,
+		])
 	}
 
 	async setIdentity() {
@@ -133,17 +145,12 @@ export default class Git {
 
 		core.debug(`Setting git user to email: ${email}, username: ${username}`)
 
-		return execCmd(
-			`git config --local user.name "${username}" && git config --local user.email "${email}"`,
-			this.workingDir,
-		)
+		await this.exec(['config', '--local', 'user.name', username])
+		await this.exec(['config', '--local', 'user.email', email])
 	}
 
 	async getBaseBranch() {
-		this.baseBranch = await execCmd(
-			`git rev-parse --abbrev-ref HEAD`,
-			this.workingDir,
-		)
+		this.baseBranch = await this.exec(['rev-parse', '--abbrev-ref', 'HEAD'])
 	}
 
 	async createPrBranch() {
@@ -163,13 +170,14 @@ export default class Git {
 
 		core.debug(`Creating PR Branch ${newBranch}`)
 
-		await execCmd(`git checkout -b "${newBranch}"`, this.workingDir)
+		await this.exec(['checkout', '-b', newBranch])
 
 		this.prBranch = newBranch
 	}
 
 	async add(file) {
-		return execCmd(`git add -f "${file}"`, this.workingDir)
+		// After --, a dest starting with - is still a path
+		return this.exec(['add', '-f', '--', file])
 	}
 
 	isOneCommitPush() {
@@ -231,23 +239,17 @@ export default class Git {
 	}
 
 	async getLastCommitSha() {
-		this.lastCommitSha = await execCmd(`git rev-parse HEAD`, this.workingDir)
+		this.lastCommitSha = await this.exec(['rev-parse', 'HEAD'])
 	}
 
 	async changes(destination) {
 		// gets array of git diffs for the destination, which either can be a file or a dict
-		const output = await execCmd(
-			`git diff HEAD ${destination}`,
-			this.workingDir,
-		)
+		const output = await this.exec(['diff', 'HEAD', '--', destination])
 		return Object.values(this.parseGitDiffOutput(output))
 	}
 
 	async getFileStatuses() {
-		const statusOutput = await execCmd(
-			`git status --porcelain`,
-			this.workingDir,
-		)
+		const statusOutput = await this.exec(['status', '--porcelain'])
 		return parse(statusOutput).reduce((acc, entry) => {
 			acc[entry.name] = entry.mode
 			return acc
@@ -255,10 +257,7 @@ export default class Git {
 	}
 
 	async hasChanges() {
-		const statusOutput = await execCmd(
-			`git status --porcelain`,
-			this.workingDir,
-		)
+		const statusOutput = await this.exec(['status', '--porcelain'])
 
 		return parse(statusOutput).length !== 0
 	}
@@ -270,18 +269,13 @@ export default class Git {
 		if (COMMIT_BODY) {
 			message += `\n\n${COMMIT_BODY}`
 		}
-		return execCmd(
-			`git commit -m '${message.replace(/'/g, "'\\''")}'`,
-			this.workingDir,
-		)
+		return this.exec(['commit', '-m', message])
 	}
 
 	// Returns a git tree parsed for the specified commit sha
 	async getTreeId(commitSha) {
 		core.debug(`Getting treeId for commit ${commitSha}`)
-		const output = (
-			await execCmd(`git cat-file -p ${commitSha}`, this.workingDir)
-		).split('\n')
+		const output = (await this.exec(['cat-file', '-p', commitSha])).split('\n')
 
 		const commitHeaders = output.slice(
 			0,
@@ -296,11 +290,9 @@ export default class Git {
 
 	async getTreeDiff(referenceTreeId, differenceTreeId) {
 		// -z prints paths verbatim, so they are not quoted and can contain spaces
-		const output = await execCmd(
-			`git diff-tree -z -r ${referenceTreeId} ${differenceTreeId}`,
-			this.workingDir,
-			false,
-		)
+		const output = await this.exec(['diff-tree', '-z', '-r', referenceTreeId, differenceTreeId], {
+			trimResult: false,
+		})
 
 		// Each entry is ":<mode> <mode> <blob> <blob> <change>" NUL "<path>" NUL
 		const fields = output.split('\0')
@@ -341,20 +333,19 @@ export default class Git {
 
 	// Gets the commit list in chronological order
 	async getCommitsToPush() {
-		const output = await execCmd(
-			`git log --format=%H --reverse ${SKIP_PR === false ? `` : `origin/`}${this.baseBranch}..HEAD`,
-			this.workingDir,
-		)
+		const output = await this.exec([
+			'log',
+			'--format=%H',
+			'--reverse',
+			`${SKIP_PR === false ? `` : `origin/`}${this.baseBranch}..HEAD`,
+		])
 
 		const commits = output.split('\n')
 		return commits
 	}
 
 	async getCommitMessage(commitSha) {
-		return await execCmd(
-			`git log -1 --format=%B ${commitSha}`,
-			this.workingDir,
-		)
+		return await this.exec(['log', '-1', '--format=%B', commitSha])
 	}
 
 	// A wrapper for running all the flow to generate all the pending commits using the GitHub API
@@ -399,21 +390,18 @@ export default class Git {
 	}
 
 	async status() {
-		return execCmd(`git status`, this.workingDir)
+		return this.exec(['status'])
 	}
 
 	async push() {
 		if (FORK) {
-			return execCmd(
-				`git push -u fork ${this.prBranch} --force`,
-				this.workingDir,
-			)
+			return this.exec(['push', '-u', 'fork', this.prBranch, '--force'])
 		}
 		if (IS_INSTALLATION_TOKEN) {
 			return await this.createGithubVerifiedCommits()
 		}
 		// With SKIP_PR the commits go straight onto the base branch, which must not be force pushed
-		return execCmd(`git push ${this.gitUrl}${SKIP_PR === false ? ' --force' : ''}`, this.workingDir)
+		return this.exec(['push', this.gitUrl, ...(SKIP_PR === false ? ['--force'] : [])])
 	}
 
 	async findExistingPr() {

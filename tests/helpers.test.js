@@ -42,6 +42,10 @@ function gitIn(cwd, ...args) {
 async function makeRepo(commits) {
 	const dir = await makeTmpDir()
 	gitIn(dir, 'init', '-q')
+	// For the commits that Git makes in it
+	gitIn(dir, 'config', 'user.name', 'test')
+	gitIn(dir, 'config', 'user.email', 'test@example.com')
+	gitIn(dir, 'config', 'commit.gpgsign', 'false')
 	for (const files of commits) {
 		for (const [file, content] of Object.entries(files)) {
 			if (content === null) await fs.remove(path.join(dir, file))
@@ -119,9 +123,10 @@ const GIT_CONFIG = {
 	FORK: false,
 }
 
-// A Git instance with a fixed config and a fake Octokit. With `commands`, shell commands are
-// recorded there instead of being run
-async function loadGit({ config = {}, octokit = {}, commands } = {}) {
+// A Git instance with a fixed config and a fake Octokit. With `commands`, the programs it runs are
+// recorded there as { file, args, env } instead of being run, and print what `outputs` has for
+// their arguments
+async function loadGit({ config = {}, octokit = {}, commands, outputs = {} } = {}) {
 	const helpers = await import('../src/helpers.js')
 	const mocks = {
 		'../src/config.js': { default: { ...GIT_CONFIG, ...config } },
@@ -130,9 +135,9 @@ async function loadGit({ config = {}, octokit = {}, commands } = {}) {
 	if (commands) {
 		mocks['../src/helpers.js'] = {
 			...helpers,
-			execCmd: async (command) => {
-				commands.push(command)
-				return ''
+			execFile: async (file, args, _workingDir, options = {}) => {
+				commands.push({ file, args, env: options.env })
+				return outputs[args.join(' ')] ?? ''
 			},
 		}
 	}
@@ -306,11 +311,26 @@ describe('Git.setIdentity', () => {
 
 			await git.setIdentity()
 
-			assert.deepEqual(commands, [
-				`git config --local user.name "${username}" && git config --local user.email "${email}"`,
+			assert.deepEqual(commands.map(({ args }) => args), [
+				['config', '--local', 'user.name', username],
+				['config', '--local', 'user.email', email],
 			])
 		})
 	}
+
+	test('passes GIT_USERNAME and GIT_EMAIL to git literally', async () => {
+		const dir = await makeRepo([{ 'a.txt': 'a' }])
+		const username = `$(touch pwned) "quoted" 'single'`
+		const email = '`touch pwned`@example.com'
+		const git = await loadGit({ config: { GIT_USERNAME: username, GIT_EMAIL: email } })
+		git.workingDir = dir
+
+		await git.setIdentity()
+
+		assert.equal(gitIn(dir, 'config', '--local', 'user.name'), username)
+		assert.equal(gitIn(dir, 'config', '--local', 'user.email'), email)
+		assert.equal(await fs.pathExists(path.join(dir, 'pwned')), false)
+	})
 })
 
 describe('Git.initRepo with FORK', () => {
@@ -339,14 +359,13 @@ describe('Git.initRepo with FORK', () => {
 
 			await git.initRepo(repo)
 
+			const args = commands.map(({ args }) => args)
 			assert.ok(
-				commands.some((command) => command.includes(`https://${credentials}@${repo.fullName}.git`)),
+				args.some((command) => command.includes(`https://${credentials}@${repo.fullName}.git`)),
 			)
-			assert.ok(
-				commands.includes(
-					`git remote add fork https://${credentials}@ghe.example.com/forker/repo.git`,
-				),
-				commands.join('\n'),
+			assert.deepEqual(
+				args.find((command) => command[0] === 'remote'),
+				['remote', 'add', 'fork', `https://${credentials}@ghe.example.com/forker/repo.git`],
 			)
 		})
 	}
@@ -384,19 +403,25 @@ describe('Git.push', () => {
 	test('does not force push the base branch with SKIP_PR', async () => {
 		const { commands } = await pushWith({ SKIP_PR: true })
 
-		assert.deepEqual(commands, ['git push https://test-token@github.com/owner/repo.git'])
+		assert.deepEqual(commands.map(({ args }) => args), [
+			['push', 'https://test-token@github.com/owner/repo.git'],
+		])
 	})
 
 	test('force pushes the recreated PR branch', async () => {
 		const { commands } = await pushWith({ SKIP_PR: false })
 
-		assert.deepEqual(commands, ['git push https://test-token@github.com/owner/repo.git --force'])
+		assert.deepEqual(commands.map(({ args }) => args), [
+			['push', 'https://test-token@github.com/owner/repo.git', '--force'],
+		])
 	})
 
 	test('force pushes the PR branch to the fork', async () => {
 		const { commands } = await pushWith({ SKIP_PR: false, FORK: 'forker' })
 
-		assert.deepEqual(commands, ['git push -u fork repo-sync/source/default --force'])
+		assert.deepEqual(commands.map(({ args }) => args), [
+			['push', '-u', 'fork', 'repo-sync/source/default', '--force'],
+		])
 	})
 
 	test('does not force update the base branch ref with SKIP_PR and an installation token', async () => {
@@ -473,6 +498,84 @@ describe('Git.getTreeDiff', () => {
 			path: 'ünïcödé.txt',
 		})
 		assert.equal(byPath['removed file.txt'].newMode, '000000')
+	})
+})
+
+// sync.yml values that a shell would run. Without spaces they are valid branch names
+const SHELL_PATH = '$(touch pwned)'
+const SHELL_BRANCH = '$(touch${IFS}pwned)'
+
+describe('git commands without a shell', () => {
+	test('clones a sync.yml branch like $(…) as one literal argument', async () => {
+		const commands = []
+		const git = await loadGit({
+			config: { GIT_USERNAME: 'u', GIT_EMAIL: 'e@example.com' },
+			commands,
+			outputs: { 'rev-parse --abbrev-ref HEAD': SHELL_BRANCH },
+		})
+
+		await git.initRepo({
+			fullName: 'github.com/owner/repo',
+			uniqueName: `github.com/owner/repo@${SHELL_BRANCH}`,
+			host: 'github.com',
+			user: 'owner',
+			name: 'repo',
+			branch: SHELL_BRANCH,
+		})
+
+		const clone = commands.find(({ args }) => args[0] === 'clone')
+		assert.equal(clone.file, 'git')
+		assert.deepEqual(clone.args.slice(0, 5), ['clone', '--depth', '1', '--branch', SHELL_BRANCH])
+		assert.equal(clone.args.at(-1), path.join('tmp', `github.com/owner/repo@${SHELL_BRANCH}`))
+	})
+
+	test('adds a sync.yml dest like $(…) as a literal path', async () => {
+		const dir = await makeRepo([{ 'a.txt': 'a' }])
+		await fs.outputFile(path.join(dir, SHELL_PATH), 'synced')
+		const git = await loadGit()
+		git.workingDir = dir
+
+		await git.add(SHELL_PATH)
+
+		assert.equal(gitIn(dir, 'diff', '--cached', '--name-only'), SHELL_PATH)
+		assert.equal(await fs.pathExists(path.join(dir, 'pwned')), false)
+	})
+
+	test('adds a dest starting with - as a path, not an option', async () => {
+		const dir = await makeRepo([{ 'a.txt': 'a' }])
+		await fs.outputFile(path.join(dir, '--dry-run'), 'synced')
+		const git = await loadGit()
+		git.workingDir = dir
+
+		await git.add('--dry-run')
+
+		assert.equal(gitIn(dir, 'diff', '--cached', '--name-only'), '--dry-run')
+	})
+
+	test('creates a PR branch from a sync.yml branch like $(…) literally', async () => {
+		const dir = await makeRepo([{ 'a.txt': 'a' }])
+		const git = await loadGit()
+		Object.assign(git, { workingDir: dir, repo: { branch: SHELL_BRANCH } })
+
+		await git.createPrBranch()
+
+		assert.equal(git.prBranch, `repo-sync/source/${SHELL_BRANCH}`)
+		assert.equal(gitIn(dir, 'rev-parse', '--abbrev-ref', 'HEAD'), git.prBranch)
+		assert.equal(await fs.pathExists(path.join(dir, 'pwned')), false)
+	})
+
+	test('commits a message with quotes and $(…) literally', async () => {
+		const dir = await makeRepo([{ 'a.txt': 'a' }])
+		await fs.outputFile(path.join(dir, 'a.txt'), 'b')
+		gitIn(dir, 'add', 'a.txt')
+		const git = await loadGit({ config: { COMMIT_BODY: `body with 'quotes'` } })
+		git.workingDir = dir
+		const message = `it's "synced" ${SHELL_PATH} \`touch pwned\``
+
+		await git.commit(message)
+
+		assert.equal(gitIn(dir, 'log', '-1', '--format=%B'), `${message}\n\nbody with 'quotes'`)
+		assert.equal(await fs.pathExists(path.join(dir, 'pwned')), false)
 	})
 })
 
