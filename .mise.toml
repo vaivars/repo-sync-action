@@ -13,6 +13,10 @@ run = "npm ci"
 [tasks.lint]
 run = "npm run lint"
 
+[tasks.typecheck]
+description = "Typecheck src/ and tests/ with tsc"
+run = "npm run typecheck"
+
 [tasks.build]
 run = "npm run build"
 
@@ -34,7 +38,7 @@ run = [
 depends = ["build"]
 description = "Run the unit tests and the local integration test with mocked git"
 run = [
-    "node --test 'tests/*.test.js'",
+    "node --test 'tests/*.test.ts'",
 ]
 
 [tasks.ci]
@@ -43,6 +47,7 @@ run = [
     "mise run install",
     "mise run format:check",
     "mise run lint",
+    "mise run typecheck",
     "mise run lint:actions",
     "mise run test",
     "npm run build:check",

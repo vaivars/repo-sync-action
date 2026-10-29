@@ -3,12 +3,12 @@ import assert from 'node:assert/strict'
 import path from 'node:path'
 import { describe, test } from 'node:test'
 
-import { isReferenceExistsError } from '../src/helpers.js'
-import { loadConfig, loadHelpers, makeTmpDir, writeTree } from './support.js'
+import { isReferenceExistsError } from '../src/github.ts'
+import { loadConfig, loadHelpers, makeTmpDir, writeTree } from './support.ts'
 
 // Shaped like Octokit's RequestError for POST /repos/{owner}/{repo}/git/refs
-function requestError(status, message) {
-	const error = new Error(message)
+function requestError(status: number, message: string) {
+	const error: Error & { status?: number } = new Error(message)
 	error.status = status
 	return error
 }

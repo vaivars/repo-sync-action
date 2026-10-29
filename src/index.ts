@@ -1,9 +1,11 @@
 import * as core from '@actions/core'
 import * as fs from 'fs'
-import * as path from 'path'
 import { pathToFileURL } from 'url'
 
-import Git from './git.js'
+import { changedFiles } from './changes.ts'
+import { errorDetails } from './errors.ts'
+import Git from './git.ts'
+import type { ExistingPr } from './github.ts'
 import {
 	addTrailingSlash,
 	copy,
@@ -12,9 +14,12 @@ import {
 	pathIsDirectory,
 	remove,
 	setTmpDir,
-} from './helpers.js'
+} from './helpers.ts'
+import { fileCommitMessage, originalMessageOf, prDescription, prTitle } from './messages.ts'
 
-import { default as config, parseConfig } from './config.js'
+import { default as config, parseConfig } from './config.ts'
+import type { FileEntry, SyncTarget } from './config.ts'
+import type { ChangedFiles } from './pull-request.ts'
 
 const {
 	COMMIT_EACH_FILE,
@@ -33,14 +38,21 @@ const {
 	TEAM_REVIEWERS,
 } = config
 
-export async function run() {
+// A commit the sync made: one per file entry with COMMIT_EACH_FILE, and one with the files left over
+interface SyncCommit {
+	dest: string
+	source?: string
+	commitMessage: string | undefined
+}
+
+export async function run(): Promise<void> {
 	setTmpDir(TMP_DIR)
 
 	const git = new Git()
 
 	const repos = await parseConfig()
 
-	const prUrls = []
+	const prUrls: string[] = []
 
 	for (const repo of repos) {
 		await processRepository(repo, git, prUrls)
@@ -59,7 +71,7 @@ export async function run() {
 	core.info('Cleanup complete')
 }
 
-async function processRepository(item, git, prUrls) {
+async function processRepository(item: SyncTarget, git: Git, prUrls: string[]): Promise<void> {
 	core.info(`Repository Info`)
 	core.info(`Slug\t\t: ${item.repo.name}`)
 	core.info(`Owner\t\t: ${item.repo.user}`)
@@ -71,7 +83,7 @@ async function processRepository(item, git, prUrls) {
 		// Clone and setup the git repository locally
 		await git.initRepo(item.repo)
 
-		let existingPr
+		let existingPr: ExistingPr | undefined
 		if (SKIP_PR === false) {
 			await git.createPrBranch()
 
@@ -84,11 +96,13 @@ async function processRepository(item, git, prUrls) {
 		}
 
 		core.info(`Locally syncing file(s) between source and target repository`)
-		const modified = []
+		const modified: SyncCommit[] = []
+		// What the PR body lists: the changes that each entry staged
+		const entryChanges: ChangedFiles[] = []
 
 		// Loop through all selected files of the source repo
 		for (const file of item.files) {
-			await syncFile(file, git, modified)
+			await syncFile(file, git, modified, entryChanges)
 		}
 
 		if (DRY_RUN) {
@@ -101,16 +115,8 @@ async function processRepository(item, git, prUrls) {
 		}
 
 		const hasChanges = await git.hasChanges()
-		const useOriginalMessage = ORIGINAL_MESSAGE && git.isOneCommitPush()
-		const originalMessage = useOriginalMessage
-			? git.originalCommitMessage()
-			: undefined
-		const firstLineBreakIndex = originalMessage
-			? originalMessage.indexOf('\n')
-			: -1
-		const prBody = useOriginalMessage && firstLineBreakIndex !== -1
-			? originalMessage.substring(firstLineBreakIndex + 1).trim()
-			: undefined
+		const originalMessage = originalMessageOf(ORIGINAL_MESSAGE, git)
+		const prBody = prDescription(originalMessage)
 
 		if (hasChanges === false && modified.length < 1) {
 			core.info('File(s) already up to date')
@@ -123,11 +129,11 @@ async function processRepository(item, git, prUrls) {
 		if (hasChanges === true) {
 			core.debug(`Creating commit for remaining files`)
 
-			const commitMessage = useOriginalMessage ? originalMessage : undefined
-			await git.commit(commitMessage)
+			// The original message, or Git's default without one
+			await git.commit(originalMessage)
 			modified.push({
 				dest: git.workingDir,
-				commitMessage: commitMessage,
+				commitMessage: originalMessage,
 			})
 		}
 
@@ -135,17 +141,9 @@ async function processRepository(item, git, prUrls) {
 		await git.push()
 
 		if (SKIP_PR === false) {
-			// Only the per-file commits have a file list
-			const changedFiles = modified.filter((file) => file.files !== undefined)
-
-			const useCommitAsPRTitle = COMMIT_AS_PR_TITLE && useOriginalMessage
-			const prTitle = useCommitAsPRTitle
-				? originalMessage.split('\n', 1)[0].trim()
-				: undefined
-
 			const pullRequest = await git.createOrUpdatePr(
-				COMMIT_EACH_FILE ? changedFiles : [],
-				prTitle,
+				entryChanges,
+				prTitle(originalMessage, COMMIT_AS_PR_TITLE),
 				prBody,
 			)
 
@@ -183,12 +181,17 @@ async function processRepository(item, git, prUrls) {
 
 		core.info('\t')
 	} catch (err) {
-		core.setFailed(err.message)
-		core.debug(err)
+		core.setFailed((err as Error).message)
+		core.debug(errorDetails(err))
 	}
 }
 
-async function syncFile(file, git, modified) {
+async function syncFile(
+	file: FileEntry,
+	git: Git,
+	modified: SyncCommit[],
+	entryChanges: ChangedFiles[],
+): Promise<void> {
 	if (isProtectedPath(file.source)) {
 		return core.warning(`Source ${file.source} is inside .git or TMP_DIR and is not synced`)
 	}
@@ -221,6 +224,11 @@ async function syncFile(file, git, modified) {
 
 	await git.add(file.dest)
 
+	// What the PR body lists for the entry, read before a commit takes it out of the index. Without
+	// COMMIT_EACH_FILE the changes of all entries stay staged, so only those below dest are read
+	const changes = await stagedChangesOf(file, isDirectory, git)
+	if (changes) entryChanges.push(changes)
+
 	// Commit each file separately, if option is set to false commit all files at once later
 	if (COMMIT_EACH_FILE === true) {
 		const hasChanges = await git.hasChanges()
@@ -231,61 +239,40 @@ async function syncFile(file, git, modified) {
 
 		core.debug(`Creating commit for file(s) ${file.dest}`)
 
-		// Use different commit/pr message based on if the source is a directory or file
-		const directory = isDirectory ? 'directory' : 'file'
-
-		const syncedFiles = await getSyncedFileList(
-			file.source,
-			file.dest,
-			isDirectory,
-			file,
-		)
-		const fileStatuses = await git.getFileStatuses()
-
-		const details = syncedFiles.map((filePath) => {
-			const mode = fileStatuses[filePath] || ''
-			let statusText = 'unchanged'
-			if (mode.includes('A') || mode.includes('?')) statusText = 'created'
-			if (mode.includes('M')) statusText = 'updated'
-			if (mode.includes('D')) statusText = 'deleted'
-
-			const relPath = isDirectory
-				? path.relative(file.dest, filePath)
-				: path.basename(filePath)
-			return `\`${relPath}\` - ${statusText}`
+		const commitMessage = fileCommitMessage(originalMessageOf(ORIGINAL_MESSAGE, git), {
+			prefix: COMMIT_PREFIX,
+			source: file.source,
+			dest: file.dest,
+			destExists,
 		})
 
-		const useOriginalMessage = ORIGINAL_MESSAGE && git.isOneCommitPush()
-		const originalMessage = useOriginalMessage ? git.originalCommitMessage() : undefined
-
-		const message = {
-			true: {
-				commit: useOriginalMessage
-					? originalMessage
-					: `${COMMIT_PREFIX} synced local '${file.dest}' with remote '${file.source}'`,
-			},
-			false: {
-				commit: useOriginalMessage
-					? originalMessage
-					: `${COMMIT_PREFIX} created local '${file.dest}' from remote '${file.source}'`,
-			},
-		}
-
-		await git.commit(message[destExists].commit)
+		await git.commit(commitMessage)
 		modified.push({
 			dest: file.dest,
 			source: file.source,
-			// The PR body lists these, see formatChangedFiles
-			header: `From remote ${directory} <code>${file.source}</code>, synced the following files:`,
-			files: details,
-			commitMessage: message[destExists].commit,
+			commitMessage,
 		})
 	}
 }
 
+// What the PR body lists for an entry: the changes staged below its dest, unless there are none.
+// dest is a pathspec, so when the dests of two entries overlap, a file below both of them can be
+// listed under each
+async function stagedChangesOf(
+	file: FileEntry,
+	isDirectory: boolean,
+	git: Git,
+): Promise<ChangedFiles | undefined> {
+	const changes = await git.stagedChanges(file.dest)
+	if (changes.length === 0) return undefined
+
+	const syncedFiles = await getSyncedFileList(file.source, file.dest, isDirectory, file)
+	return changedFiles({ source: file.source, dest: file.dest, isDirectory }, syncedFiles, changes)
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-	run().catch((err) => {
-		core.setFailed(err.message)
-		core.debug(err)
+	run().catch((err: unknown) => {
+		core.setFailed((err as Error).message)
+		core.debug(errorDetails(err))
 	})
 }

@@ -4,16 +4,35 @@ import assert from 'node:assert/strict'
 import path from 'node:path'
 import { describe, test } from 'node:test'
 
-import { loadConfig, ROOT_DIR } from './support.js'
+import type { SyncTarget } from '../src/config.ts'
+import { configFailure, loadConfig, ROOT_DIR } from './support.ts'
 
 describe('config', () => {
-	for (const [value, expected] of [[undefined, false], ['false', false], ['true', true]]) {
+	for (const [value, expected] of [[undefined, false], ['false', false], ['true', true]] as const) {
 		test(`parses IS_FINE_GRAINED ${value} as ${expected}`, async () => {
 			const { context } = await loadConfig('', { IS_FINE_GRAINED: value })
 
 			assert.equal(context.IS_FINE_GRAINED, expected)
 		})
 	}
+
+	test('rejects FORK together with SKIP_PR', async () => {
+		assert.deepEqual(await configFailure({ FORK: 'forker', SKIP_PR: 'true' }), {
+			failures: [
+				"FORK and SKIP_PR can't be used together: SKIP_PR pushes straight to the target branch, "
+				+ 'while FORK opens a pull request from a fork',
+			],
+			code: 1,
+		})
+	})
+
+	test('accepts FORK and SKIP_PR each on their own', async () => {
+		const { context: fork } = await loadConfig('', { FORK: 'forker', SKIP_PR: 'false' })
+		const { context: skip } = await loadConfig('', { FORK: 'false', SKIP_PR: 'true' })
+
+		assert.deepEqual([fork.FORK, fork.SKIP_PR], ['forker', false])
+		assert.deepEqual([skip.FORK, skip.SKIP_PR], [undefined, true])
+	})
 
 	test('reads a repo name starting with http as owner/name and still accepts URLs', async () => {
 		const { parseConfig } = await loadConfig(`
@@ -62,7 +81,7 @@ group:
 
 describe('repo groups', () => {
 	// The entry parseConfig makes of a file given only by its source
-	const file = (source) => ({
+	const file = (source: string) => ({
 		source,
 		dest: source,
 		template: false,
@@ -71,7 +90,7 @@ describe('repo groups', () => {
 		exclude: undefined,
 	})
 	// The repos parseConfig resolves, in order, with their files
-	const resolved = (repos) => repos.map(({ repo, files }) => [repo.uniqueName, files])
+	const resolved = (repos: SyncTarget[]) => repos.map(({ repo, files }) => [repo.uniqueName, files])
 
 	test('resolve a group name in repos to the repos of that group', async () => {
 		const { parseConfig, warnings } = await loadConfig(`
@@ -176,6 +195,24 @@ group:
 	})
 })
 
+describe('repo group names', () => {
+	test('match only the groups that sync.yml defines, also when named like Object properties', async () => {
+		const { resolveRepoList, warnings } = await loadConfig('')
+		const groups = { constructor: ['user/a'], main: ['user/b'] }
+
+		assert.deepEqual(resolveRepoList('constructor', groups), ['user/a'])
+		for (const name of ['toString', '__proto__', 'hasOwnProperty']) {
+			assert.deepEqual(resolveRepoList(name, groups), [name])
+		}
+		assert.deepEqual(resolveRepoList('valueOf\nconstructor\nmain', groups), [
+			'valueOf',
+			'user/a',
+			'user/b',
+		])
+		assert.deepEqual(warnings, [])
+	})
+})
+
 describe('action.yml', () => {
 	// Inputs whose default depends on the token or the runner, or that have none
 	const WITHOUT_DEFAULT = [
@@ -193,7 +230,9 @@ describe('action.yml', () => {
 	]
 
 	async function actionInputs() {
-		const action = yaml.load(await fs.readFile(path.join(ROOT_DIR, 'action.yml'), 'utf8'))
+		const action = yaml.load(await fs.readFile(path.join(ROOT_DIR, 'action.yml'), 'utf8')) as {
+			inputs: Record<string, { default?: string }>
+		}
 		return action.inputs
 	}
 

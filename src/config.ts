@@ -5,25 +5,108 @@ import * as yaml from 'js-yaml'
 import * as os from 'os'
 import * as path from 'path'
 
+// The token, where GitHub is, and the action's inputs
+export type Config = {
+	GITHUB_TOKEN: string
+	GITHUB_SERVER_URL: string
+	IS_INSTALLATION_TOKEN: boolean
+	GIT_EMAIL: string | undefined
+	GIT_USERNAME: string | undefined
+	CONFIG_PATH: string
+	IS_FINE_GRAINED: boolean
+	COMMIT_BODY: string
+	COMMIT_PREFIX: string
+	COMMIT_EACH_FILE: boolean
+	// Undefined when the input is 'false'
+	PR_LABELS: string[] | undefined
+	PR_BODY: string
+	ASSIGNEES: string[] | undefined
+	REVIEWERS: string[] | undefined
+	TEAM_REVIEWERS: string[] | undefined
+	TMP_DIR: string
+	DRY_RUN: boolean
+	SKIP_CLEANUP: boolean
+	OVERWRITE_EXISTING_PR: boolean
+	GITHUB_REPOSITORY: string
+	SKIP_PR: boolean
+	ORIGINAL_MESSAGE: boolean
+	COMMIT_AS_PR_TITLE: boolean
+	BRANCH_PREFIX: string
+	// false when not set, undefined when the input is 'false'
+	FORK: string | false | undefined
+}
+
+// A repository to sync to, from a sync.yml key or repos entry like owner/name@branch
+export interface Repo {
+	// host/owner/name
+	fullName: string
+	// host/owner/name@branch, which names its clone in TMP_DIR
+	uniqueName: string
+	host: string
+	user: string
+	name: string
+	// 'default' for the repository's default branch
+	branch: string
+}
+
+// A truthy value renders the source as a LiquidJS template, and an object holds its variables
+export type Template = boolean | Record<string, unknown>
+
+// A file entry of sync.yml, with the defaults filled in
+export interface FileEntry {
+	source: string
+	dest: string
+	template: Template
+	replace: boolean
+	deleteOrphaned: boolean
+	// The excluded paths, each prefixed with source
+	exclude: string[] | undefined
+}
+
+// A repository with all the file entries that sync.yml lists for it
+export interface SyncTarget {
+	repo: Repo
+	files: FileEntry[]
+}
+
+// A file entry as sync.yml has it. YAML values keep whatever type they were written with: only
+// source and exclude are checked, the others pass through as they are
+interface FileEntryYml {
+	source?: unknown
+	dest?: string
+	template?: Template
+	replace?: boolean
+	deleteOrphaned?: boolean
+	exclude?: unknown
+}
+
+// An entry of the group list in sync.yml
+interface GroupYml {
+	repos?: unknown
+	files?: unknown
+}
+
+type InputOptions = Parameters<typeof getInput>[1]
+type InputKey = Exclude<
+	keyof Config,
+	'GITHUB_TOKEN' | 'GITHUB_SERVER_URL' | 'IS_INSTALLATION_TOKEN'
+>
+
 const REPLACE_DEFAULT = true
 const TEMPLATE_DEFAULT = false
 const DELETE_ORPHANED_DEFAULT = false
 
 // Clones go to the runner's temporary directory, outside the workspace that templates can read
-const tmpDirIn = (parent) => path.join(parent, `repo-sync-${Date.now().toString()}`)
+const tmpDirIn = (parent: string) => path.join(parent, `repo-sync-${Date.now().toString()}`)
 
-let context
+let context: Config
 
 try {
 	let isInstallationToken = false
-	let token = getInput({
-		key: 'GH_PAT',
-	})
+	let token = getInput('GH_PAT', {})
 
 	if (!token) {
-		token = getInput({
-			key: 'GH_INSTALLATION_TOKEN',
-		})
+		token = getInput('GH_INSTALLATION_TOKEN', {})
 		isInstallationToken = true
 		if (!token) {
 			core.setFailed('You must provide either GH_PAT or GH_INSTALLATION_TOKEN')
@@ -31,15 +114,16 @@ try {
 		}
 	}
 
-	context = {
-		GITHUB_TOKEN: token,
+	const tokens = {
+		// getInput returns a string for an input without a type
+		GITHUB_TOKEN: token as string,
 		GITHUB_SERVER_URL: process.env.GITHUB_SERVER_URL || 'https://github.com',
 		IS_INSTALLATION_TOKEN: isInstallationToken,
 	}
 
 	// The defaults are declared in action.yml, which the runner applies. The same values are repeated
-	// here for runs outside of Actions; tests/config.test.js checks that the two agree
-	const inputs = {
+	// here for runs outside of Actions; tests/config.test.ts checks that the two agree
+	const inputs: Record<InputKey, InputOptions> = {
 		GIT_EMAIL: {},
 		GIT_USERNAME: {},
 		CONFIG_PATH: { default: '.github/sync.yml' },
@@ -64,11 +148,21 @@ try {
 		FORK: { default: false, disableable: true },
 	}
 
+	const values: Record<string, unknown> = { ...tokens }
 	for (const [key, options] of Object.entries(inputs)) {
-		context[key] = getInput({ key, ...options })
+		values[key] = getInput(key, options)
 	}
+	// getInput returns a string, boolean or array as each input's options say, which Config spells out
+	context = values as Config
 
 	core.setSecret(context.GITHUB_TOKEN)
+
+	if (context.FORK && context.SKIP_PR) {
+		throw new Error(
+			"FORK and SKIP_PR can't be used together: SKIP_PR pushes straight to the target branch, "
+				+ 'while FORK opens a pull request from a fork',
+		)
+	}
 
 	core.debug(JSON.stringify(context, null, 2))
 
@@ -77,11 +171,11 @@ try {
 		core.warning(`TEMP_DIR already exists. Using "${context.TMP_DIR}" now.`)
 	}
 } catch (err) {
-	core.setFailed(err.message)
+	core.setFailed((err as Error).message)
 	process.exit(1)
 }
 
-const parseRepoName = (fullRepo) => {
+const parseRepoName = (fullRepo: string): Repo => {
 	let host = new URL(context.GITHUB_SERVER_URL).host
 
 	if (/^https?:\/\//.test(fullRepo)) {
@@ -107,7 +201,7 @@ const parseRepoName = (fullRepo) => {
 	}
 }
 
-const parseExclude = (text, src) => {
+const parseExclude = (text: unknown, src: string): string[] | undefined => {
 	if (text === undefined || typeof text !== 'string') return undefined
 
 	const files = text.split('\n').filter((i) => i)
@@ -117,22 +211,23 @@ const parseExclude = (text, src) => {
 
 // Returns the valid file entries. A missing or empty list yields none, and parseConfig skips the
 // repo with a warning if it ends up without any files
-const parseFiles = (files, target) => {
+const parseFiles = (files: unknown, target: string): FileEntry[] => {
 	if (!Array.isArray(files)) return []
 
-	return files.flatMap((item) => {
+	return files.flatMap((item: unknown) => {
 		if (typeof item === 'string') item = { source: item }
 
-		if (typeof item?.source === 'string' && item.source !== '') {
+		const entry = item as FileEntryYml | null | undefined
+		if (typeof entry?.source === 'string' && entry.source !== '') {
 			return [{
-				source: item.source,
-				dest: item.dest || item.source,
-				template: item.template === undefined ? TEMPLATE_DEFAULT : item.template,
-				replace: item.replace === undefined ? REPLACE_DEFAULT : item.replace,
-				deleteOrphaned: item.deleteOrphaned === undefined
+				source: entry.source,
+				dest: entry.dest || entry.source,
+				template: entry.template === undefined ? TEMPLATE_DEFAULT : entry.template,
+				replace: entry.replace === undefined ? REPLACE_DEFAULT : entry.replace,
+				deleteOrphaned: entry.deleteOrphaned === undefined
 					? DELETE_ORPHANED_DEFAULT
-					: item.deleteOrphaned,
-				exclude: parseExclude(item.exclude, item.source),
+					: entry.deleteOrphaned,
+				exclude: parseExclude(entry.exclude, entry.source),
 			}]
 		}
 
@@ -141,10 +236,15 @@ const parseFiles = (files, target) => {
 	})
 }
 
-const resolveRepoList = (reposValue, repoGroups) => {
+// The repo names of a repos value. The entries of a list are not checked, they pass through as
+// YAML has them
+export const resolveRepoList = (
+	reposValue: unknown,
+	repoGroups: Record<string, unknown>,
+): string[] => {
 	// If reposValue is already an array, return it as-is
 	if (Array.isArray(reposValue)) {
-		return reposValue
+		return reposValue as string[]
 	}
 
 	// If it's a string, check if it's a group reference
@@ -152,7 +252,12 @@ const resolveRepoList = (reposValue, repoGroups) => {
 		const trimmedValue = reposValue.trim()
 
 		// Check if this is a group reference (no newlines, matches a group name)
-		if (!trimmedValue.includes('\n') && repoGroups[trimmedValue]) {
+		// Only the groups sync.yml defines, not the properties every object inherits
+		if (
+			!trimmedValue.includes('\n')
+			&& Object.hasOwn(repoGroups, trimmedValue)
+			&& repoGroups[trimmedValue]
+		) {
 			core.debug(`Resolving repo group reference: ${trimmedValue}`)
 			const groupRepos = repoGroups[trimmedValue]
 
@@ -166,7 +271,7 @@ const resolveRepoList = (reposValue, repoGroups) => {
 					.filter((n) => n)
 			}
 
-			return groupRepos
+			return groupRepos as string[]
 		}
 
 		// Otherwise, treat as newline-separated inline list
@@ -177,9 +282,9 @@ const resolveRepoList = (reposValue, repoGroups) => {
 			.filter((n) => n)
 
 		return entries.flatMap((entry) => {
-			if (repoGroups[entry] && Array.isArray(repoGroups[entry])) {
+			if (Object.hasOwn(repoGroups, entry) && Array.isArray(repoGroups[entry])) {
 				core.debug(`Resolving repo group reference: ${entry}`)
-				return repoGroups[entry]
+				return repoGroups[entry] as string[]
 			}
 			return [entry]
 		})
@@ -190,13 +295,14 @@ const resolveRepoList = (reposValue, repoGroups) => {
 	return []
 }
 
-export async function parseConfig() {
+export async function parseConfig(): Promise<SyncTarget[]> {
 	const fileContent = await fs.promises.readFile(context.CONFIG_PATH)
 
-	const configObject = yaml.load(fileContent.toString())
+	// Not validated: a file that is not a mapping fails or is skipped below, as it did in JavaScript
+	const configObject = yaml.load(fileContent.toString()) as Record<string, unknown>
 
 	// Extract and validate repo_groups
-	const repoGroups = configObject.repo_groups || {}
+	const repoGroups = (configObject.repo_groups || {}) as Record<string, unknown>
 
 	// Validate repo_groups structure
 	if (repoGroups && typeof repoGroups === 'object') {
@@ -214,7 +320,7 @@ export async function parseConfig() {
 		)
 	}
 
-	const result = {}
+	const result: Record<string, SyncTarget> = {}
 
 	Object.keys(configObject).forEach((key) => {
 		// Skip the repo_groups key as it's not a sync target
@@ -225,7 +331,7 @@ export async function parseConfig() {
 		if (key === 'group') {
 			const rawObject = configObject[key]
 
-			const groups = Array.isArray(rawObject) ? rawObject : [rawObject]
+			const groups = (Array.isArray(rawObject) ? rawObject : [rawObject]) as GroupYml[]
 
 			groups.forEach((group) => {
 				const repos = resolveRepoList(group.repos, repoGroups)

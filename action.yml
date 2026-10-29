@@ -95,7 +95,7 @@ inputs:
     default: 'false'
   SKIP_PR:
     description: |
-      Commit straight to the target branch without a pull request
+      Commit straight to the target branch without a pull request. Can't be used together with FORK
     required: false
     default: 'false'
   BRANCH_PREFIX:
@@ -105,7 +105,7 @@ inputs:
     default: 'repo-sync/SOURCE_REPO_NAME'
   FORK:
     description: |
-      Account whose fork the changes are pushed to before opening the pull request. The token must belong to this account
+      Account whose fork the changes are pushed to before opening the pull request. The token must belong to this account. Can't be used together with SKIP_PR
     required: false
 
 outputs:

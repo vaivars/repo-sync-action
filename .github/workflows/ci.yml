@@ -28,6 +28,8 @@ jobs:
       - run: npm ci
       - run: mise run format:check
       - run: mise run lint
+      - name: Typecheck
+        run: mise run typecheck
       # Only this step gets the token, which zizmor uses for its online audits
       - name: Lint workflows
         run: mise run lint:actions

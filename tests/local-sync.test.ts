@@ -13,12 +13,14 @@ const MOCK_BIN_DIR = path.join(TMP_TEST_DIR, 'mock-bin')
 const MOCK_GIT_PATH = path.join(MOCK_BIN_DIR, 'git')
 
 // Suppress ::debug:: and ::add-mask:: workflow command output outside of GitHub Actions
-const originalStdoutWrite = process.stdout.write.bind(process.stdout)
-process.stdout.write = (chunk, ...args) => {
+const originalStdoutWrite = process.stdout.write.bind(process.stdout) as (
+	...args: unknown[]
+) => boolean
+process.stdout.write = ((chunk: string | Buffer, ...args: unknown[]) => {
 	const str = typeof chunk === 'string' ? chunk : chunk.toString()
 	if (str.startsWith('::debug::') || str.startsWith('::add-mask::')) return true
 	return originalStdoutWrite(chunk, ...args)
-}
+}) as typeof process.stdout.write
 
 console.log('Setting up test environment...')
 if (fs.existsSync(TMP_TEST_DIR)) {
@@ -95,7 +97,8 @@ try {
 		fs.removeSync(process.env.INPUT_TMP_DIR)
 	}
 
-	const module = await import(path.join(ROOT_DIR, 'dist/index.js'))
+	const module =
+		(await import(path.join(ROOT_DIR, 'dist/index.js'))) as typeof import('../src/index.ts')
 
 	console.log('Running sync...')
 	await module.run()

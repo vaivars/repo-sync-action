@@ -206,7 +206,8 @@ For each target repository the action:
    into one commit, `🔄 synced file(s) with <owner>/<source-repo>`.
 3. Opens a pull request titled `🔄 synced file(s) with <owner>/<source-repo>` and labelled `sync`.
    If a sync pull request from an earlier run is still open, it's updated instead. Set
-   `OVERWRITE_EXISTING_PR: false` to open a new one each run.
+   `OVERWRITE_EXISTING_PR: false` to open a new one each run. The pull request lists the files that
+   each file entry creates, updates, deletes or renames.
 
 Alternatives to this flow:
 
@@ -214,6 +215,8 @@ Alternatives to this flow:
 - `FORK: <account>` pushes the branch to a fork under that account and opens the pull request from
   the fork. The token must belong to that account. Labels, assignees and reviewers aren't applied in
   this mode.
+
+`SKIP_PR` and `FORK` can't be used together, and the run fails if both are set.
 
 A workflow step that customizes the pull request:
 
@@ -254,8 +257,8 @@ One of `GH_PAT` or `GH_INSTALLATION_TOKEN` is required. All other inputs are opt
 | `GIT_EMAIL`             | Commit author email                                                                                                         | `GH_PAT` owner                       |
 | `BRANCH_PREFIX`         | Prefix for the pull request branch. `SOURCE_REPO_NAME` is replaced with the source repository name                          | `repo-sync/SOURCE_REPO_NAME`         |
 | `OVERWRITE_EXISTING_PR` | Update an open sync pull request instead of opening a new one                                                               | `true`                               |
-| `SKIP_PR`               | Commit straight to the target branch without a pull request                                                                 | `false`                              |
-| `FORK`                  | Account whose fork the changes are pushed to before opening the pull request                                                |                                      |
+| `SKIP_PR`               | Commit straight to the target branch without a pull request. Can't be used together with `FORK`                             | `false`                              |
+| `FORK`                  | Account whose fork the changes are pushed to before opening the pull request. Can't be used together with `SKIP_PR`         |                                      |
 | `DRY_RUN`               | Do everything except push and open pull requests                                                                            | `false`                              |
 | `TMP_DIR`               | Working directory for the clones. Files in it are never synced or read by templates                                         | `$RUNNER_TEMP/repo-sync-<timestamp>` |
 | `SKIP_CLEANUP`          | Keep `TMP_DIR` after the run                                                                                                | `false`                              |
@@ -324,6 +327,7 @@ The tooling is managed with [mise](https://mise.jdx.dev):
 ```sh
 mise run install       # install dependencies
 mise run lint          # eslint
+mise run typecheck     # tsc on src/ and tests/
 mise run lint:actions  # actionlint, zizmor and shellcheck on the workflows and scripts
 mise run format        # dprint
 mise run test          # build, then run the unit and local integration tests
@@ -331,8 +335,9 @@ mise run build         # bundle src/ into dist/
 mise run ci            # everything CI checks
 ```
 
-The action runs the bundled `dist/index.js`. Rebuild and commit `dist/` together with every change
-to `src/`.
+The source in `src/` and the tests in `tests/` are TypeScript, which Node 24 runs directly: `npm start`
+runs `src/index.ts`, and `node --test 'tests/*.test.ts'` the tests. The action runs the bundled
+`dist/index.js`. Rebuild and commit `dist/` together with every change to `src/`.
 
 Releases are made from the [Conventional Commits](https://www.conventionalcommits.org) on `main`:
 a breaking change (`feat!:`) bumps the major version, `feat:` the minor and other commits the

@@ -8,8 +8,9 @@
   "scripts": {
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "start": "node src/index.js",
-    "build": "ncc build src/index.js -o dist --license licenses.txt",
+    "typecheck": "tsc --noEmit",
+    "start": "node src/index.ts",
+    "build": "ncc build src/index.ts -o dist --license licenses.txt",
     "build:check": "npm run build && git diff --exit-code dist/"
   },
   "repository": {
@@ -38,7 +39,6 @@
     "@actions/core": "^3.0.1",
     "@actions/github": "^9.1.1",
     "@octokit/plugin-throttling": "^11.0.3",
-    "@putout/git-status-porcelain": "^3.0.0",
     "action-input-parser": "^1.2.38",
     "fs-extra": "^11.3.4",
     "js-yaml": "^4.3.2",
@@ -47,9 +47,14 @@
   "devDependencies": {
     "@eslint/js": "^10.0.0",
     "@octokit/core": "^7.0.6",
+    "@types/fs-extra": "^11.0.4",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.19.2",
     "@vercel/ncc": "^0.38.4",
     "eslint": "^10.3.0",
     "esmock": "^2.8.0",
-    "globals": "^17.6.0"
+    "globals": "^17.6.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.1"
   }
 }
