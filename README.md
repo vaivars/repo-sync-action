@@ -264,6 +264,10 @@ Use `@v1` for the latest 1.x release, or pin an exact release tag (`@v1.x.y`) or
 
 ## Development
 
+Bug reports go to [issues](https://github.com/vaivars/repo-sync-action/issues), and questions
+and ideas to [discussions](https://github.com/vaivars/repo-sync-action/discussions). Pull requests
+are welcome.
+
 The tooling is managed with [mise](https://mise.jdx.dev):
 
 ```sh

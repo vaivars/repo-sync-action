@@ -3,3 +3,9 @@ contact_links:
   - name: 📚 Docs
     url: https://github.com/vaivars/repo-sync-action#readme
     about: Read the Repo Sync Action documentation.
+  - name: 🚀 Feature Request
+    url: https://github.com/vaivars/repo-sync-action/discussions/new?category=ideas
+    about: Share ideas for new features
+  - name: ❓ Ask a Question
+    url: https://github.com/vaivars/repo-sync-action/discussions/new?category=q-a
+    about: Ask the community for help
