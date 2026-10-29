@@ -23,10 +23,11 @@ run = "dprint fmt"
 run = "dprint check"
 
 [tasks."lint:actions"]
-description = "Lint the GitHub Actions workflows. zizmor adds its online audits when GH_TOKEN is set"
+description = "Lint the GitHub Actions workflows and their scripts. zizmor adds its online audits when GH_TOKEN is set"
 run = [
     "actionlint",
     "zizmor .github/workflows",
+    "shellcheck scripts/*.sh",
 ]
 
 [tasks.test]
