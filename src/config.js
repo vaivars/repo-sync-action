@@ -2,11 +2,15 @@ import * as core from '@actions/core'
 import { getInput } from 'action-input-parser'
 import fs from 'fs-extra'
 import * as yaml from 'js-yaml'
+import * as os from 'os'
 import * as path from 'path'
 
 const REPLACE_DEFAULT = true
 const TEMPLATE_DEFAULT = false
 const DELETE_ORPHANED_DEFAULT = false
+
+// Clones go to the runner's temporary directory, outside the workspace that templates can read
+const tmpDirIn = (parent) => path.join(parent, `repo-sync-${Date.now().toString()}`)
 
 let context
 
@@ -46,7 +50,7 @@ try {
 		ASSIGNEES: { type: 'array' },
 		REVIEWERS: { type: 'array' },
 		TEAM_REVIEWERS: { type: 'array' },
-		TMP_DIR: { default: `tmp-${Date.now().toString()}` },
+		TMP_DIR: { default: tmpDirIn(process.env.RUNNER_TEMP || os.tmpdir()) },
 		DRY_RUN: { type: 'boolean', default: false },
 		SKIP_CLEANUP: { type: 'boolean', default: false },
 		OVERWRITE_EXISTING_PR: { type: 'boolean', default: true },
@@ -67,7 +71,7 @@ try {
 	core.debug(JSON.stringify(context, null, 2))
 
 	while (fs.existsSync(context.TMP_DIR)) {
-		context.TMP_DIR = `tmp-${Date.now().toString()}`
+		context.TMP_DIR = tmpDirIn(path.dirname(context.TMP_DIR))
 		core.warning(`TEMP_DIR already exists. Using "${context.TMP_DIR}" now.`)
 	}
 } catch (err) {
