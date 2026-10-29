@@ -45,7 +45,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",
-    "@octokit/core": "^7.0.6",
+    "@octokit/core": "^7.0.8",
     "@vercel/ncc": "^0.38.4",
     "eslint": "^10.3.0",
     "esmock": "^2.8.0",
