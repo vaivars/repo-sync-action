@@ -44,6 +44,12 @@ if [ "$1" = "rev-parse" ]; then
     exit 0
 fi
 
+# check-ref-format --branch <name> prints a valid name
+if [ "$1" = "check-ref-format" ]; then
+    echo "$3"
+    exit 0
+fi
+
 exit 0
 `
 fs.writeFileSync(MOCK_GIT_PATH, mockGitScript)
