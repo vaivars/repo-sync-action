@@ -16,12 +16,6 @@ export interface ExecOptions {
 	env?: Record<string, string>
 }
 
-// The changed files of one synced source, which the PR body lists
-export interface ChangedFiles {
-	header: string
-	files: string[]
-}
-
 // The target repository clones live in TMP_DIR. index.ts passes it in, since importing config.ts
 // here would read the action inputs
 let tmpDir: string | undefined
@@ -90,41 +84,6 @@ const liquid = new Liquid({
 	memoryLimit: 100_000_000,
 	renderLimit: 30_000,
 })
-
-// From https://github.com/MartinKolarik/dedent-js/blob/master/src/index.ts - MIT © 2015 Martin Kolárik
-export function dedent(
-	templateStrings: TemplateStringsArray | string,
-	...values: unknown[]
-): string {
-	const matches: string[] = []
-	const strings = typeof templateStrings === 'string'
-		? [templateStrings]
-		: templateStrings.slice()
-	strings[strings.length - 1] = strings[strings.length - 1].replace(
-		/\r?\n([\t ]*)$/,
-		'',
-	)
-	for (let i = 0; i < strings.length; i++) {
-		let match
-		if ((match = strings[i].match(/\n[\t ]+/g))) {
-			matches.push(...match)
-		}
-	}
-	if (matches.length) {
-		const size = Math.min(...matches.map((value) => value.length - 1))
-		const pattern = new RegExp(`\n[\t ]{${size}}`, 'g')
-		for (let i = 0; i < strings.length; i++) {
-			strings[i] = strings[i].replace(pattern, '\n')
-		}
-	}
-	strings[0] = strings[0].replace(/^\r?\n/, '')
-	let string = strings[0]
-	for (let i = 0; i < values.length; i++) {
-		// Concatenated as they are, like the original, so that null prints as null
-		string += (values[i] as string) + strings[i + 1]
-	}
-	return string
-}
 
 // Runs a program without a shell, so that each argument reaches it as one literal value
 function runFile(
@@ -322,53 +281,6 @@ export function arrayEquals(array1: unknown, array2: unknown): boolean {
 		&& array1.length === array2.length
 		&& array1.every((value, i) => value === array2[i])
 	)
-}
-
-// GitHub rejects pull request bodies longer than this
-export const PR_BODY_MAX_LENGTH = 65536
-
-// Renders the changed files of each synced source ({ header, files }) as a collapsed list. Files
-// that do not fit into maxLength characters are summed up in an "...and N more" line instead
-export function formatChangedFiles(sections: ChangedFiles[], maxLength = Infinity): string {
-	if (sections.length === 0) return ''
-
-	const start = '<details>\n<summary>Changed files</summary>\n<ul>\n'
-	const end = '\n</ul>\n</details>'
-	const full = start
-		+ sections.map(({ header, files }) => `<li>${header}\n\n${files.join('\n')}</li>`).join('')
-		+ end
-	if (full.length <= maxLength) return full
-
-	const total = sections.reduce((count, { files }) => count + files.length, 0)
-	const pieces: { text: string; isFile?: boolean }[] = sections.flatMap(({ header, files }, i) => [
-		{ text: `${i === 0 ? '' : '</li>'}<li>${header}\n` },
-		...files.map((file) => ({ text: `\n${file}`, isFile: true })),
-	])
-	// Room for the "...and N more" line and the closing tags
-	const reserve = `<li>...and ${total} more</li>`.length + end.length
-
-	let text = start
-	let listed = 0
-	for (const piece of pieces) {
-		if (text.length + piece.text.length + reserve > maxLength) break
-		text += piece.text
-		if (piece.isFile) listed++
-	}
-
-	return `${text}${text === start ? '<li>' : '\n'}...and ${total - listed} more</li>${end}`
-}
-
-// The parts of Octokit's RequestError that isReferenceExistsError reads
-interface RequestErrorLike {
-	status?: unknown
-	message: string
-}
-
-// GitHub's answer when createRef targets a branch that already exists. Octokit
-// appends the docs URL to the message, so match its start, not all of it.
-export function isReferenceExistsError(error: unknown): boolean {
-	const requestError = error as RequestErrorLike
-	return requestError.status === 422 && requestError.message.startsWith('Reference already exists')
 }
 
 // Custom readfiles implementation to replace node-readfiles. The options are accepted, but hidden

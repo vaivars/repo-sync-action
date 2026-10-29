@@ -1,11 +1,23 @@
 import * as core from '@actions/core'
-import * as github from '@actions/github'
-import { throttling } from '@octokit/plugin-throttling'
-import { parse } from '@putout/git-status-porcelain'
 import * as path from 'path'
 
+import { authEnv, basicCredentials } from './auth.ts'
 import config from './config.ts'
 import type { Repo } from './config.ts'
+import {
+	hasStatusChanges,
+	parseFileStatuses,
+	parseGitDiffOutput,
+	parseTreeDiff,
+	parseTreeId,
+} from './git-output.ts'
+import type { TreeDiffEntry } from './git-output.ts'
+import { createOctokit, GitHub } from './github.ts'
+import type { ExistingPr, PullRequest, RepoSession } from './github.ts'
+import { execFile, execFileBuffer } from './helpers.ts'
+import type { ExecOptions } from './helpers.ts'
+import { prBranchName } from './pull-request.ts'
+import type { ChangedFiles } from './pull-request.ts'
 
 const {
 	GITHUB_TOKEN,
@@ -25,76 +37,21 @@ const {
 	FORK,
 } = config
 
-import {
-	dedent,
-	execFile,
-	execFileBuffer,
-	formatChangedFiles,
-	isReferenceExistsError,
-	PR_BODY_MAX_LENGTH,
-} from './helpers.ts'
-import type { ChangedFiles, ExecOptions } from './helpers.ts'
-
-type Octokit = ReturnType<typeof github.getOctokit>
-// The REST endpoint methods, the only part of the client the action uses
-type RestApi = Octokit['rest']
-type TreeEntry = NonNullable<Parameters<RestApi['git']['createTree']>[0]>['tree'][number]
-
-// The parts of an open pull request that the action reads
-export interface ExistingPr {
-	number: number
-	body: string | null
-}
-
-// A pull request that createOrUpdatePr created or updated
-export interface PullRequest extends ExistingPr {
-	html_url: string
-}
-
-// One entry of git diff-tree between a commit's tree and its parent's
-export interface TreeDiffEntry {
-	newMode: string
-	previousMode: string
-	newBlob: string
-	previousBlob: string
-	change: string
-	path: string
-}
-
-// The parts of a push event's payload that the action reads
-type PushPayload = {
-	commits: { message: string }[]
-	before: string
-	after: string
-	repository: { name: string; owner: { login: string; name: string } }
-}
-
-// setPrWarning puts this on top of an existing PR body while it is being resynced
-const PR_WARNING = '⚠️ This PR is being automatically resynced ⚠️'
-
-// The environment that authenticates git's HTTPS requests. git reads http.extraHeader from it
-// (git 2.31 or newer), so the token is neither in argv nor in a remote URL, which git would store
-// in the clone's .git/config. Unlike a GIT_ASKPASS helper, it needs no script on disk, and the
-// token never goes through git's credential helpers, which could store it
-function authEnv(): Record<string, string> {
-	// The user:password pairs of the https://<credentials>@host URLs used before. A bare token was
-	// the user name with an empty password
-	const credentials = `${IS_INSTALLATION_TOKEN ? 'x-access-token:' : ''}${
-		IS_FINE_GRAINED ? 'oauth:' : ''
-	}${GITHUB_TOKEN}`
-	const basic = Buffer.from(credentials.includes(':') ? credentials : `${credentials}:`)
-		.toString('base64')
+// The environment that authenticates git's HTTPS requests, see auth.ts
+function gitAuthEnv(): Record<string, string> {
+	const basic = basicCredentials(GITHUB_TOKEN, {
+		isInstallationToken: IS_INSTALLATION_TOKEN,
+		isFineGrained: IS_FINE_GRAINED,
+	})
 	core.setSecret(basic)
 
-	return {
-		GIT_CONFIG_COUNT: '1',
-		GIT_CONFIG_KEY_0: 'http.extraHeader',
-		GIT_CONFIG_VALUE_0: `Authorization: Basic ${basic}`,
-	}
+	return authEnv(basic)
 }
 
-export default class Git {
-	github: RestApi
+// The session for the repository being synced, which index.ts drives: it runs git in the clone,
+// and hands the GitHub API calls to github.ts
+export default class Git implements RepoSession {
+	github: GitHub
 	authEnv: Record<string, string>
 	// Set by initRepo for the repository being synced
 	repo!: Repo
@@ -104,36 +61,17 @@ export default class Git {
 	baseBranch: string | undefined
 	prBranch: string | undefined
 	existingPr: ExistingPr | undefined
-	// The changes of the pushed commit by path, once getChangesFromLastCommit fetched them
-	lastCommitChanges: Record<string, string> | undefined
 
 	constructor() {
-		const octokit = github.getOctokit(
-			GITHUB_TOKEN,
-			{
-				baseUrl: process.env.GITHUB_API_URL || 'https://api.github.com',
-				throttle: {
-					onRateLimit: (retryAfter) => {
-						core.debug(
-							`Hit GitHub API rate limit, retrying after ${retryAfter}s`,
-						)
-						return true
-					},
-					onSecondaryRateLimit: (retryAfter) => {
-						core.debug(
-							`Hit secondary GitHub API rate limit, retrying after ${retryAfter}s`,
-						)
-						return true
-					},
-				},
-			},
-			throttling,
-		)
-
 		// We only need the rest client
-		this.github = octokit.rest
+		this.github = new GitHub(createOctokit(GITHUB_TOKEN).rest, this, {
+			fork: FORK,
+			skipPr: SKIP_PR,
+			defaultTitle: `${COMMIT_PREFIX} synced file(s) with ${GITHUB_REPOSITORY}`,
+			body: { sourceRepository: GITHUB_REPOSITORY, serverUrl: GITHUB_SERVER_URL, prBody: PR_BODY },
+		})
 
-		this.authEnv = authEnv()
+		this.authEnv = gitAuthEnv()
 	}
 
 	// Runs git in the clone. Values from sync.yml and the inputs are passed as separate arguments,
@@ -172,7 +110,7 @@ export default class Git {
 		// Set values to current repo
 		this.repo = repo
 		this.workingDir = path.join(TMP_DIR, repo.uniqueName)
-		// No credentials in it, see authEnv
+		// No credentials in it, see auth.ts
 		this.gitUrl = `https://${repo.fullName}.git`
 
 		if (repo.branch !== 'default') {
@@ -193,13 +131,7 @@ export default class Git {
 	}
 
 	async createFork(): Promise<void> {
-		core.debug(
-			`Creating fork with OWNER: ${this.repo.user} and REPO: ${this.repo.name}`,
-		)
-		await this.github.repos.createFork({
-			owner: this.repo.user,
-			repo: this.repo.name,
-		})
+		await this.github.createFork()
 	}
 
 	async createRemote(forkUrl: string): Promise<string> {
@@ -225,7 +157,7 @@ export default class Git {
 
 		// Fill in only what was not given. An installation token cannot read GET /user
 		if ((!username || !email) && !IS_INSTALLATION_TOKEN) {
-			const { data } = await this.github.users.getAuthenticated()
+			const data = await this.github.getAuthenticatedUser()
 			username = username || data.login
 			// The profile email is null when it is private, so use the account's noreply address
 			email = email || data.email || `${data.id}+${data.login}@users.noreply.github.com`
@@ -248,19 +180,12 @@ export default class Git {
 	}
 
 	async createPrBranch(): Promise<void> {
-		const prefix = BRANCH_PREFIX.replace(
-			'SOURCE_REPO_NAME',
-			GITHUB_REPOSITORY.split('/')[1],
+		const newBranch = prBranchName(
+			BRANCH_PREFIX,
+			GITHUB_REPOSITORY,
+			this.repo.branch,
+			OVERWRITE_EXISTING_PR === false ? Math.round(new Date().getTime() / 1000) : undefined,
 		)
-
-		let newBranch = path
-			.join(prefix, this.repo.branch)
-			.replace(/\\/g, '/')
-			.replace(/\/\./g, '/')
-
-		if (OVERWRITE_EXISTING_PR === false) {
-			newBranch += `-${Math.round(new Date().getTime() / 1000)}`
-		}
 
 		await this.checkBranchName(newBranch, 'PR branch')
 
@@ -277,64 +202,11 @@ export default class Git {
 	}
 
 	isOneCommitPush(): boolean {
-		return (
-			github.context.eventName === 'push'
-			&& (github.context.payload as PushPayload).commits.length === 1
-		)
+		return this.github.isOneCommitPush()
 	}
 
 	originalCommitMessage(): string {
-		return (github.context.payload as PushPayload).commits[0].message
-	}
-
-	parseGitDiffOutput(string: string): Record<string, string> {
-		// parses git diff output and returns a dictionary mapping the file path to the diff output for this file
-		// split diff into separate entries for separate files. \ndiff --git should be a reliable way to detect the separation, as content of files is always indented
-		return `\n${string}`
-			.split('\ndiff --git')
-			.slice(1)
-			.reduce((resultDict, fileDiff) => {
-				const lines = fileDiff.split('\n')
-				const lastHeaderLineIndex = lines.findIndex((line) => line.startsWith('+++'))
-				if (lastHeaderLineIndex === -1) return resultDict // ignore binary files
-
-				const plainDiff = lines
-					.slice(lastHeaderLineIndex + 1)
-					.join('\n')
-					.trim()
-				const filePath = lines[lastHeaderLineIndex].startsWith('+++ b/')
-					? lines[lastHeaderLineIndex].slice(6) // remove '+++ b/' for every file except removed files
-					: lines[lastHeaderLineIndex - 1].slice(6) // remove '--- a/' for removed files
-				return { ...resultDict, [filePath]: plainDiff }
-			}, {})
-	}
-
-	async getChangesFromLastCommit(source: string): Promise<string[]> {
-		// gets array of git diffs for the source, which either can be a file or a dict
-		if (this.lastCommitChanges === undefined) {
-			const payload = github.context.payload as PushPayload
-			const diff = await this.github.repos.compareCommits({
-				mediaType: {
-					format: 'diff',
-				},
-				owner: payload.repository.owner.name,
-				repo: payload.repository.name,
-				base: payload.before,
-				head: payload.after,
-			})
-			// With the diff media type, the response is the diff as text
-			this.lastCommitChanges = this.parseGitDiffOutput(diff.data as unknown as string)
-		}
-		const lastCommitChanges = this.lastCommitChanges
-		if (source.endsWith('/')) {
-			return Object.keys(lastCommitChanges)
-				.filter((filePath) => filePath.startsWith(source))
-				.reduce((result: string[], key) => [...result, lastCommitChanges[key]], [])
-		} else {
-			return lastCommitChanges[source] === undefined
-				? []
-				: [lastCommitChanges[source]]
-		}
+		return this.github.originalCommitMessage()
 	}
 
 	async getLastCommitSha(): Promise<void> {
@@ -344,21 +216,18 @@ export default class Git {
 	async changes(destination: string): Promise<string[]> {
 		// gets array of git diffs for the destination, which either can be a file or a dict
 		const output = await this.exec(['diff', 'HEAD', '--', destination])
-		return Object.values(this.parseGitDiffOutput(output))
+		return Object.values(parseGitDiffOutput(output))
 	}
 
 	async getFileStatuses(): Promise<Record<string, string>> {
 		const statusOutput = await this.exec(['status', '--porcelain'])
-		return parse(statusOutput).reduce((acc: Record<string, string>, entry) => {
-			acc[entry.name] = entry.mode
-			return acc
-		}, {})
+		return parseFileStatuses(statusOutput)
 	}
 
 	async hasChanges(): Promise<boolean> {
 		const statusOutput = await this.exec(['status', '--porcelain'])
 
-		return parse(statusOutput).length !== 0
+		return hasStatusChanges(statusOutput)
 	}
 
 	async commit(msg?: string): Promise<string> {
@@ -374,18 +243,7 @@ export default class Git {
 	// Returns a git tree parsed for the specified commit sha
 	async getTreeId(commitSha: string): Promise<string> {
 		core.debug(`Getting treeId for commit ${commitSha}`)
-		const output = (await this.exec(['cat-file', '-p', commitSha])).split('\n')
-
-		const commitHeaders = output.slice(
-			0,
-			output.findIndex((e) => e === ''),
-		)
-		// A commit always has a tree header
-		const tree = commitHeaders
-			.find((e) => e.startsWith('tree'))!
-			.replace('tree ', '')
-
-		return tree
+		return parseTreeId(await this.exec(['cat-file', '-p', commitSha]))
 	}
 
 	async getTreeDiff(referenceTreeId: string, differenceTreeId: string): Promise<TreeDiffEntry[]> {
@@ -394,41 +252,17 @@ export default class Git {
 			trimResult: false,
 		})
 
-		// Each entry is ":<mode> <mode> <blob> <blob> <change>" NUL "<path>" NUL
-		const fields = output.split('\0')
-		const diff = []
-		for (let i = 0; i + 1 < fields.length; i += 2) {
-			const [newMode, previousMode, newBlob, previousBlob, change] = fields[i]
-				.replace(/^:/, '')
-				.split(' ')
-			const path = fields[i + 1]
-
-			diff.push({
-				newMode,
-				previousMode,
-				newBlob,
-				previousBlob,
-				change,
-				path,
-			})
-		}
-
-		return diff
+		return parseTreeDiff(output)
 	}
 
-	// Creates the blob objects in GitHub for the files that are not in the previous commit only
-	async uploadGitHubBlob(blob: string): Promise<unknown> {
-		core.debug(`Uploading GitHub Blob for blob ${blob}`)
-		// Raw bytes: decoding them as text would corrupt binary files and change the blob sha
-		const fileContent = await execFileBuffer('git', ['cat-file', 'blob', blob], this.workingDir)
+	// The content of a blob, as raw bytes: decoding them as text would corrupt binary files and
+	// change the blob sha
+	readBlob(blob: string): Promise<Buffer> {
+		return execFileBuffer('git', ['cat-file', 'blob', blob], this.workingDir)
+	}
 
-		// Creates the blob. We don't need to store the response because the local sha is the same and we can use it to reference the blob
-		return this.github.git.createBlob({
-			owner: this.repo.user,
-			repo: this.repo.name,
-			content: fileContent.toString('base64'),
-			encoding: 'base64',
-		})
+	async uploadGitHubBlob(blob: string): Promise<unknown> {
+		return this.github.uploadBlob(blob)
 	}
 
 	// Gets the commit list in chronological order
@@ -448,47 +282,6 @@ export default class Git {
 		return await this.exec(['log', '-1', '--format=%B', commitSha])
 	}
 
-	// A wrapper for running all the flow to generate all the pending commits using the GitHub API
-	async createGithubVerifiedCommits(): Promise<void> {
-		core.debug(`Creating Commits using GitHub API`)
-		const commits = await this.getCommitsToPush()
-
-		if (SKIP_PR === false) {
-			// Creates the PR branch if doesn't exists
-			try {
-				await this.github.git.createRef({
-					owner: this.repo.user,
-					repo: this.repo.name,
-					sha: this.lastCommitSha,
-					ref: 'refs/heads/' + this.prBranch,
-				})
-
-				core.debug(`Created new branch ${this.prBranch}`)
-			} catch (error) {
-				// If the branch exists ignores the error
-				if (!isReferenceExistsError(error)) throw error
-			}
-		}
-
-		for (const commit of commits) {
-			await this.createGithubCommit(commit)
-		}
-
-		core.debug(
-			`Updating branch ${SKIP_PR === false ? this.prBranch : this.baseBranch} ref`,
-		)
-		await this.github.git.updateRef({
-			owner: this.repo.user,
-			repo: this.repo.name,
-			ref: `heads/${SKIP_PR === false ? this.prBranch : this.baseBranch}`,
-			sha: this.lastCommitSha,
-			// The PR branch is recreated on every run. The base branch must only fast-forward, so
-			// that the update fails instead of dropping commits pushed while the sync ran
-			force: SKIP_PR === false,
-		})
-		core.debug(`Commit using GitHub API completed`)
-	}
-
 	async status(): Promise<string> {
 		return this.exec(['status'])
 	}
@@ -499,216 +292,47 @@ export default class Git {
 			return this.execRemote(['push', '-u', 'fork', this.prBranch!, '--force'])
 		}
 		if (IS_INSTALLATION_TOKEN) {
-			return await this.createGithubVerifiedCommits()
+			return await this.github.createVerifiedCommits()
 		}
 		// With SKIP_PR the commits go straight onto the base branch, which must not be force pushed
 		return this.execRemote(['push', this.gitUrl, ...(SKIP_PR === false ? ['--force'] : [])])
 	}
 
-	async findExistingPr(): Promise<ExistingPr | undefined> {
-		const { data } = await this.github.pulls.list({
-			owner: this.repo.user,
-			repo: this.repo.name,
-			state: 'open',
-			head: `${FORK ? FORK : this.repo.user}:${this.prBranch}`,
-		})
+	// The PR side, in github.ts
 
-		this.existingPr = data[0]
-
-		return this.existingPr
+	findExistingPr(): Promise<ExistingPr | undefined> {
+		return this.github.findExistingPr()
 	}
 
-	// The PR that findExistingPr found or createOrUpdatePr created, which the methods that change a
-	// PR are only called with
-	get pr(): ExistingPr {
-		return this.existingPr!
+	setPrWarning(): Promise<void> {
+		return this.github.setPrWarning()
 	}
 
-	async setPrWarning(): Promise<void> {
-		await this.github.pulls.update({
-			owner: this.repo.user,
-			repo: this.repo.name,
-			pull_number: this.pr.number,
-			// Tagged, so that only the template is dedented and the body keeps its indentation
-			body: dedent`
-				${PR_WARNING}
-
-				${this.pr.body}
-			`,
-		})
+	removePrWarning(): Promise<void> {
+		return this.github.removePrWarning()
 	}
 
-	async removePrWarning(): Promise<void> {
-		await this.github.pulls.update({
-			owner: this.repo.user,
-			repo: this.repo.name,
-			pull_number: this.pr.number,
-			// A PR without a body fails here, as it did before
-			body: this.pr.body!.replace(PR_WARNING, ''),
-		})
-	}
-
-	renderPrBody(changedFiles: string, description: string | undefined): string {
-		// Tagged, so that only the template is dedented and the interpolated content keeps its
-		// indentation
-		return dedent`
-			${
-			description ? description + '\n\n' : ''
-		}synced local file(s) with [${GITHUB_REPOSITORY}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}).
-
-			${PR_BODY}
-
-			${changedFiles}
-
-			---
-
-			This PR was created automatically by the [repo-sync-action](https://github.com/vaivars/repo-sync-action) workflow run [#${
-			process.env.GITHUB_RUN_ID || 0
-		}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID || 0})
-		`
-	}
-
-	// changedFiles are the { header, files } sections that formatChangedFiles renders
-	async createOrUpdatePr(
+	createOrUpdatePr(
 		changedFiles: ChangedFiles[],
 		title: string | undefined,
 		description: string | undefined,
 	): Promise<PullRequest> {
-		// The file list gets what the rest of the body leaves of GitHub's limit, keeping room for
-		// the warning that setPrWarning adds on the next run
-		const maxLength = PR_BODY_MAX_LENGTH
-			- `${PR_WARNING}\n\n`.length
-			- this.renderPrBody('', description).length
-		const body = this.renderPrBody(formatChangedFiles(changedFiles, maxLength), description)
-
-		const prTitle = title === undefined
-			? `${COMMIT_PREFIX} synced file(s) with ${GITHUB_REPOSITORY}`
-			: title
-
-		if (this.existingPr) {
-			core.info(`Overwriting existing PR`)
-
-			const { data } = await this.github.pulls.update({
-				owner: this.repo.user,
-				repo: this.repo.name,
-				title: prTitle,
-				pull_number: this.existingPr.number,
-				body: body,
-			})
-
-			return data
-		}
-
-		core.info(`Creating new PR`)
-
-		const { data } = await this.github.pulls.create({
-			owner: this.repo.user,
-			repo: this.repo.name,
-			title: prTitle,
-			body: body,
-			head: `${FORK ? FORK : this.repo.user}:${this.prBranch}`,
-			// Set by initRepo
-			base: this.baseBranch!,
-		})
-
-		this.existingPr = data
-
-		return data
+		return this.github.createOrUpdatePr(changedFiles, title, description)
 	}
 
-	async addPrLabels(labels: string[]): Promise<void> {
-		await this.github.issues.addLabels({
-			owner: this.repo.user,
-			repo: this.repo.name,
-			issue_number: this.pr.number,
-			labels: labels,
-		})
+	addPrLabels(labels: string[]): Promise<void> {
+		return this.github.addPrLabels(labels)
 	}
 
-	async addPrAssignees(assignees: string[]): Promise<void> {
-		await this.github.issues.addAssignees({
-			owner: this.repo.user,
-			repo: this.repo.name,
-			issue_number: this.pr.number,
-			assignees: assignees,
-		})
+	addPrAssignees(assignees: string[]): Promise<void> {
+		return this.github.addPrAssignees(assignees)
 	}
 
-	async addPrReviewers(reviewers: string[]): Promise<void> {
-		await this.github.pulls.requestReviewers({
-			owner: this.repo.user,
-			repo: this.repo.name,
-			pull_number: this.pr.number,
-			reviewers: reviewers,
-		})
+	addPrReviewers(reviewers: string[]): Promise<void> {
+		return this.github.addPrReviewers(reviewers)
 	}
 
-	async addPrTeamReviewers(reviewers: string[]): Promise<void> {
-		await this.github.pulls.requestReviewers({
-			owner: this.repo.user,
-			repo: this.repo.name,
-			pull_number: this.pr.number,
-			team_reviewers: reviewers,
-		})
-	}
-
-	async createGithubCommit(commitSha: string): Promise<void> {
-		const [treeId, parentTreeId, commitMessage] = await Promise.all([
-			this.getTreeId(`${commitSha}`),
-			this.getTreeId(`${commitSha}~1`),
-			this.getCommitMessage(commitSha),
-		])
-
-		const treeDiff = await this.getTreeDiff(treeId, parentTreeId)
-		core.debug(`Uploading the blobs to GitHub`)
-		const blobsToCreate = treeDiff.filter((e) => e.newMode !== '000000') // Do not upload the blob if it is being removed
-
-		await Promise.all(
-			blobsToCreate.map((e) => this.uploadGitHubBlob(e.newBlob)),
-		)
-		core.debug(`Creating a GitHub tree`)
-		const tree = treeDiff.map((e): TreeEntry => {
-			let newBlob: string | null = e.newBlob
-			if (e.newMode === '000000') {
-				// Set the sha to null to remove the file
-				e.newMode = e.previousMode
-				newBlob = null
-			}
-
-			const entry = {
-				path: e.path,
-				// git diff-tree prints one of the modes a tree entry can have
-				mode: e.newMode as TreeEntry['mode'],
-				type: 'blob' as const,
-				sha: newBlob,
-			}
-
-			return entry
-		})
-
-		let treeSha
-		try {
-			const request = await this.github.git.createTree({
-				owner: this.repo.user,
-				repo: this.repo.name,
-				tree,
-				base_tree: parentTreeId,
-			})
-			treeSha = request.data.sha
-		} catch (error) {
-			const requestError = error as Error
-			requestError.message = `Cannot create a new GitHub Tree: ${requestError.message}`
-			throw error
-		}
-
-		core.debug(`Creating a commit for the GitHub tree`)
-		const request = await this.github.git.createCommit({
-			owner: this.repo.user,
-			repo: this.repo.name,
-			message: commitMessage,
-			parents: [this.lastCommitSha],
-			tree: treeSha,
-		})
-		this.lastCommitSha = request.data.sha
+	addPrTeamReviewers(reviewers: string[]): Promise<void> {
+		return this.github.addPrTeamReviewers(reviewers)
 	}
 }

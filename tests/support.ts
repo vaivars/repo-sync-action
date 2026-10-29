@@ -143,12 +143,20 @@ export async function loadGit(
 		run?: boolean
 	} = {},
 ): Promise<Git> {
+	// Each module gets its mocks directly, bottom up. esmock's global mocks would put the URL of a
+	// mocked package below node_modules into the URLs of the .ts modules below, which Node then
+	// refuses to strip the types of
 	const helpers = await esmock<typeof import('../src/helpers.ts')>('../src/helpers.ts', {
 		'@actions/core': core,
 	})
-	const mocks: Record<string, unknown> = {
-		'../src/config.ts': { default: { ...GIT_CONFIG, ...config } },
+	const github = await esmock.strict<typeof import('../src/github.ts')>('../src/github.ts', {
+		'@actions/core': core,
 		'@actions/github': { getOctokit: () => ({ rest: octokit }), context: {} },
+	})
+	const mocks: Record<string, unknown> = {
+		'@actions/core': core,
+		'../src/config.ts': { default: { ...GIT_CONFIG, ...config } },
+		'../src/github.ts': github,
 		'../src/helpers.ts': helpers,
 	}
 	if (commands) {
@@ -172,7 +180,6 @@ export async function loadGit(
 	const { default: Git } = await esmock.strict<typeof import('../src/git.ts')>(
 		'../src/git.ts',
 		mocks,
-		{ '@actions/core': core },
 	)
 	return new Git()
 }

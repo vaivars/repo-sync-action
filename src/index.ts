@@ -4,7 +4,7 @@ import * as path from 'path'
 import { pathToFileURL } from 'url'
 
 import Git from './git.ts'
-import type { ExistingPr } from './git.ts'
+import type { ExistingPr } from './github.ts'
 import {
 	addTrailingSlash,
 	copy,
@@ -14,10 +14,10 @@ import {
 	remove,
 	setTmpDir,
 } from './helpers.ts'
-import type { ChangedFiles } from './helpers.ts'
 
 import { default as config, parseConfig } from './config.ts'
 import type { FileEntry, SyncTarget } from './config.ts'
+import type { ChangedFiles } from './pull-request.ts'
 
 const {
 	COMMIT_EACH_FILE,

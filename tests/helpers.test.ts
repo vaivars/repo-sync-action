@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import path from 'node:path'
 import { describe, test } from 'node:test'
 
-import { isReferenceExistsError } from '../src/helpers.ts'
+import { isReferenceExistsError } from '../src/github.ts'
 import { loadConfig, loadHelpers, makeTmpDir, writeTree } from './support.ts'
 
 // Shaped like Octokit's RequestError for POST /repos/{owner}/{repo}/git/refs
