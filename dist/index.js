@@ -42423,33 +42423,38 @@ function getIDToken(aud) {
 const external_url_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("url");
 ;// CONCATENATED MODULE: ./src/changes.ts
 
-// How the PR body describes a file with these git status --porcelain letters
-function statusText(mode) {
-    let statusText = 'unchanged';
-    if (mode.includes('A') || mode.includes('?'))
-        statusText = 'created';
-    if (mode.includes('M'))
-        statusText = 'updated';
-    if (mode.includes('D'))
-        statusText = 'deleted';
-    return statusText;
+// How the PR body describes a change with this git diff --name-status status
+function changeText(status) {
+    switch (status[0]) {
+        case 'A':
+            return 'created';
+        case 'M':
+        case 'T':
+            return 'updated';
+        case 'D':
+            return 'deleted';
+        case 'R':
+            // The score is how similar the file is to the one it was renamed from
+            return status === 'R100' ? 'renamed' : 'renamed and updated';
+        default:
+            return 'changed';
+    }
 }
-// What the PR body lists for one synced source: each synced file, relative to the destination
-// directory, with its status
-function changedFiles({ source, dest, isDirectory }, syncedFiles, fileStatuses) {
+// What the PR body lists for one synced entry: each change it staged, with the paths relative to a
+// directory dest, or the name of a single file, and how many of the synced files did not change
+function changedFiles({ source, dest, isDirectory }, syncedFiles, changes) {
     // Use different commit/pr message based on if the source is a directory or file
     const directory = isDirectory ? 'directory' : 'file';
-    const files = syncedFiles.map((filePath) => {
-        const mode = fileStatuses.get(filePath) || '';
-        const relPath = isDirectory
-            ? external_path_.relative(dest, filePath)
-            : external_path_.basename(filePath);
-        return `\`${relPath}\` - ${statusText(mode)}`;
-    });
+    const show = (filePath) => `\`${isDirectory ? external_path_.relative(dest, filePath) : external_path_.basename(filePath)}\``;
+    const files = changes.map((change) => change.from === undefined
+        ? `${show(change.path)} - ${changeText(change.status)}`
+        : `${show(change.from)} → ${show(change.path)} - ${changeText(change.status)}`);
+    const changed = new Set(changes.flatMap((change) => (change.from === undefined ? [change.path] : [change.from, change.path])));
     return {
         // The PR body lists these, see formatChangedFiles
         header: `From remote ${directory} <code>${source}</code>, synced the following files:`,
         files,
+        unchanged: syncedFiles.filter((filePath) => !changed.has(filePath)).length,
     };
 }
 
@@ -45845,6 +45850,26 @@ function parseTreeDiff(output) {
     }
     return diff;
 }
+// The changes of git diff --name-status -z output, with their paths verbatim
+function parseNameStatus(output) {
+    // Each change is "<status>" NUL "<path>" NUL. A rename, or a copy with -C, is
+    // "<status><score>" NUL "<from>" NUL "<path>" NUL
+    const fields = output.split('\0');
+    const changes = [];
+    let i = 0;
+    while (i + 1 < fields.length && fields[i] !== '') {
+        const status = fields[i];
+        if (/^[RC]/.test(status)) {
+            changes.push({ status, from: fields[i + 1], path: fields[i + 2] });
+            i += 3;
+        }
+        else {
+            changes.push({ status, path: fields[i + 1] });
+            i += 2;
+        }
+    }
+    return changes;
+}
 // The entries of git status --porcelain -z output. -z prints the paths verbatim, without the quotes
 // and escapes that git puts around paths with spaces or non-ASCII characters otherwise
 function parseStatus(statusOutput) {
@@ -45860,11 +45885,6 @@ function parseStatus(statusOutput) {
             i++;
     }
     return entries;
-}
-// The git status --porcelain -z status letters of each changed file, by its path. A Map, so that a
-// path like constructor or __proto__ is a key like any other
-function parseFileStatuses(statusOutput) {
-    return new Map(parseStatus(statusOutput).map(({ path, status }) => [path, status]));
 }
 // Whether git status --porcelain -z lists any changes
 function hasStatusChanges(statusOutput) {
@@ -50378,6 +50398,12 @@ function dedent(templateStrings, ...values) {
 const PR_BODY_MAX_LENGTH = 65536;
 // withPrWarning puts this on top of an existing PR body while it is being resynced
 const PR_WARNING = '⚠️ This PR is being automatically resynced ⚠️';
+// The line after the files of a section that has unchanged files
+function unchangedLine(unchanged) {
+    if (!unchanged)
+        return [];
+    return [`...and ${unchanged} unchanged file${unchanged === 1 ? '' : 's'}`];
+}
 // The branch the PR comes from: BRANCH_PREFIX, with SOURCE_REPO_NAME replaced by the name of the
 // source repository, and the target branch. A timestamp, if given, makes it unique
 function prBranchName(branchPrefix, sourceRepository, branch, timestamp) {
@@ -50438,14 +50464,18 @@ function formatChangedFiles(sections, maxLength = Infinity) {
     const start = '<details>\n<summary>Changed files</summary>\n<ul>\n';
     const end = '\n</ul>\n</details>';
     const full = start
-        + sections.map(({ header, files }) => `<li>${header}\n\n${files.join('\n')}</li>`).join('')
+        + sections
+            .map(({ header, files, unchanged }) => `<li>${header}\n\n${[...files, ...unchangedLine(unchanged)].join('\n')}</li>`)
+            .join('')
         + end;
     if (full.length <= maxLength)
         return full;
+    // Only the files count: the unchanged line of a section goes with it when it does not fit
     const total = sections.reduce((count, { files }) => count + files.length, 0);
-    const pieces = sections.flatMap(({ header, files }, i) => [
+    const pieces = sections.flatMap(({ header, files, unchanged }, i) => [
         { text: `${i === 0 ? '' : '</li>'}<li>${header}\n` },
         ...files.map((file) => ({ text: `\n${file}`, isFile: true })),
+        ...unchangedLine(unchanged).map((line) => ({ text: `\n${line}` })),
     ]);
     // Room for the "...and N more" line and the closing tags
     const reserve = `<li>...and ${total} more</li>`.length + end.length;
@@ -51171,13 +51201,17 @@ class Git {
         return Object.values(parseGitDiffOutput(output));
     }
     // The output is not trimmed, which would cut the spaces of a status or a path
-    async getFileStatuses() {
-        const statusOutput = await this.exec(['status', '--porcelain', '-z'], { trimResult: false });
-        return parseFileStatuses(statusOutput);
-    }
     async hasChanges() {
         const statusOutput = await this.exec(['status', '--porcelain', '-z'], { trimResult: false });
         return hasStatusChanges(statusOutput);
+    }
+    // The changes staged below dest, which the next commit makes. -M finds renames even when the
+    // runner's git config turns diff.renames off
+    async stagedChanges(dest) {
+        const output = await this.exec(['diff', '--cached', '--name-status', '-z', '-M', '--', dest], {
+            trimResult: false,
+        });
+        return parseNameStatus(output);
     }
     async commit(msg) {
         const message = commitMessage(msg, defaultSyncMessage(COMMIT_PREFIX, GITHUB_REPOSITORY), COMMIT_BODY);
@@ -51309,9 +51343,11 @@ async function processRepository(item, git, prUrls) {
         }
         info(`Locally syncing file(s) between source and target repository`);
         const modified = [];
+        // What the PR body lists: the changes that each entry staged
+        const entryChanges = [];
         // Loop through all selected files of the source repo
         for (const file of item.files) {
-            await syncFile(file, git, modified);
+            await syncFile(file, git, modified, entryChanges);
         }
         if (DRY_RUN) {
             warning('Dry run, no changes will be pushed');
@@ -51340,9 +51376,7 @@ async function processRepository(item, git, prUrls) {
         info(`Pushing changes to target repository`);
         await git.push();
         if (src_SKIP_PR === false) {
-            // Only the per-file commits have a file list
-            const fileCommits = modified.filter((file) => file.files !== undefined);
-            const pullRequest = await git.createOrUpdatePr(COMMIT_EACH_FILE ? fileCommits : [], prTitle(originalMessage, COMMIT_AS_PR_TITLE), prBody);
+            const pullRequest = await git.createOrUpdatePr(entryChanges, prTitle(originalMessage, COMMIT_AS_PR_TITLE), prBody);
             notice(`Pull Request #${pullRequest.number} created/updated: ${pullRequest.html_url}`);
             prUrls.push(pullRequest.html_url);
             if (PR_LABELS !== undefined && PR_LABELS.length > 0 && !src_FORK) {
@@ -51371,7 +51405,7 @@ async function processRepository(item, git, prUrls) {
         core_debug(errorDetails(err));
     }
 }
-async function syncFile(file, git, modified) {
+async function syncFile(file, git, modified, entryChanges) {
     if (isProtectedPath(file.source)) {
         return warning(`Source ${file.source} is inside .git or TMP_DIR and is not synced`);
     }
@@ -51395,6 +51429,11 @@ async function syncFile(file, git, modified) {
         info(`Source is directory`);
     await copy(source, dest, isDirectory, file);
     await git.add(file.dest);
+    // What the PR body lists for the entry, read before a commit takes it out of the index. Without
+    // COMMIT_EACH_FILE the changes of all entries stay staged, so only those below dest are read
+    const changes = await stagedChangesOf(file, isDirectory, git);
+    if (changes)
+        entryChanges.push(changes);
     // Commit each file separately, if option is set to false commit all files at once later
     if (COMMIT_EACH_FILE === true) {
         const hasChanges = await git.hasChanges();
@@ -51402,9 +51441,6 @@ async function syncFile(file, git, modified) {
             return core_debug('File(s) already up to date');
         }
         core_debug(`Creating commit for file(s) ${file.dest}`);
-        const syncedFiles = await getSyncedFileList(file.source, file.dest, isDirectory, file);
-        const fileStatuses = await git.getFileStatuses();
-        const { header, files } = changedFiles({ source: file.source, dest: file.dest, isDirectory }, syncedFiles, fileStatuses);
         const commitMessage = fileCommitMessage(originalMessageOf(ORIGINAL_MESSAGE, git), {
             prefix: src_COMMIT_PREFIX,
             source: file.source,
@@ -51415,11 +51451,19 @@ async function syncFile(file, git, modified) {
         modified.push({
             dest: file.dest,
             source: file.source,
-            header,
-            files,
             commitMessage,
         });
     }
+}
+// What the PR body lists for an entry: the changes staged below its dest, unless there are none.
+// dest is a pathspec, so when the dests of two entries overlap, a file below both of them can be
+// listed under each
+async function stagedChangesOf(file, isDirectory, git) {
+    const changes = await git.stagedChanges(file.dest);
+    if (changes.length === 0)
+        return undefined;
+    const syncedFiles = await getSyncedFileList(file.source, file.dest, isDirectory, file);
+    return changedFiles({ source: file.source, dest: file.dest, isDirectory }, syncedFiles, changes);
 }
 if (import.meta.url === (0,external_url_namespaceObject.pathToFileURL)(process.argv[1]).href) {
     run().catch((err) => {
