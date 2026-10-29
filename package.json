@@ -36,7 +36,7 @@
   "dependencies": {
     "@actions/core": "^3.0.1",
     "@actions/github": "^9.1.1",
-    "@octokit/plugin-throttling": "^11.0.3",
+    "@octokit/plugin-throttling": "^11.0.5",
     "@putout/git-status-porcelain": "^3.0.0",
     "action-input-parser": "^1.2.38",
     "fs-extra": "^11.3.4",
