@@ -3,13 +3,16 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import http from 'node:http'
+import type { AddressInfo } from 'node:net'
 import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
 
-import { gitIn, loadConfig, loadGit, makeTmpDir, prGit, silentCore } from './support.js'
+import type { Config } from '../src/config.ts'
+import type { Command, FakeApi } from './support.ts'
+import { gitIn, loadConfig, loadGit, makeTmpDir, prGit, silentCore } from './support.ts'
 
 // A git repo with one commit per entry of `commits`; a null content deletes the file
-async function makeRepo(commits) {
+async function makeRepo(commits: Record<string, string | Buffer | null>[]) {
 	const dir = await makeTmpDir()
 	gitIn(dir, 'init', '-q')
 	// For the commits that Git makes in it
@@ -28,7 +31,7 @@ async function makeRepo(commits) {
 }
 
 // The sha GitHub gives a blob with these bytes
-function gitBlobSha(bytes) {
+function gitBlobSha(bytes: Buffer) {
 	return createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')
 }
 
@@ -37,7 +40,7 @@ const SHELL_PATH = '$(touch pwned)'
 const SHELL_BRANCH = '$(touch${IFS}pwned)'
 
 // The environment that hands git the user:password pair as an HTTP header
-function authEnv(credentials) {
+function authEnv(credentials: string) {
 	return {
 		GIT_CONFIG_COUNT: '1',
 		GIT_CONFIG_KEY_0: 'http.extraHeader',
@@ -47,8 +50,8 @@ function authEnv(credentials) {
 
 // Serves the bare repos below root with git http-backend. Like a private repo on GitHub, a request
 // without the expected Authorization header gets a 401. Every request's header is recorded
-async function startGitServer(root, authorization) {
-	const authorizations = []
+async function startGitServer(root: string, authorization: string) {
+	const authorizations: (string | undefined)[] = []
 	const server = http.createServer((req, res) => {
 		authorizations.push(req.headers.authorization)
 		if (req.headers.authorization !== authorization) {
@@ -56,7 +59,7 @@ async function startGitServer(root, authorization) {
 			return
 		}
 
-		const url = new URL(req.url, 'http://localhost')
+		const url = new URL(req.url!, 'http://localhost')
 		const backend = spawn('git', ['http-backend'], {
 			env: {
 				...process.env,
@@ -69,18 +72,18 @@ async function startGitServer(root, authorization) {
 				QUERY_STRING: url.search.slice(1),
 				CONTENT_TYPE: req.headers['content-type'] ?? '',
 				HTTP_CONTENT_ENCODING: req.headers['content-encoding'] ?? '',
-				HTTP_GIT_PROTOCOL: req.headers['git-protocol'] ?? '',
+				HTTP_GIT_PROTOCOL: (req.headers['git-protocol'] as string | undefined) ?? '',
 			},
 		})
 		req.pipe(backend.stdin)
 
 		// A CGI response: headers, a blank line, then the body
-		const chunks = []
-		backend.stdout.on('data', (chunk) => chunks.push(chunk))
+		const chunks: Buffer[] = []
+		backend.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
 		backend.on('close', () => {
 			const output = Buffer.concat(chunks)
 			const end = output.indexOf('\r\n\r\n')
-			const headers = {}
+			const headers: Record<string, string> = {}
 			let status = 200
 			for (const line of output.subarray(0, end).toString().split('\r\n')) {
 				const [name, value] = line.split(/: (.*)/)
@@ -90,10 +93,10 @@ async function startGitServer(root, authorization) {
 			res.writeHead(status, headers).end(output.subarray(end + 4))
 		})
 	})
-	await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
 
 	return {
-		url: `http://127.0.0.1:${server.address().port}/`,
+		url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/`,
 		authorizations,
 		close: () => {
 			server.closeAllConnections()
@@ -103,7 +106,7 @@ async function startGitServer(root, authorization) {
 }
 
 describe('Git.setIdentity', () => {
-	function userApi(user) {
+	function userApi(user?: { login: string; id: number; email: string | null }): FakeApi {
 		return {
 			users: {
 				getAuthenticated: async () => {
@@ -153,7 +156,7 @@ describe('Git.setIdentity', () => {
 
 	for (const { name, config, user, identity: [username, email] } of cases) {
 		test(name, async () => {
-			const commands = []
+			const commands: Command[] = []
 			const git = await loadGit({ config, octokit: userApi(user), commands })
 
 			await git.setIdentity()
@@ -199,9 +202,9 @@ describe('Git credentials', () => {
 
 	for (const { config, credentials } of cases) {
 		test(`passes ${credentials} to the clone and the fork push in the environment`, async () => {
-			const commands = []
-			const secrets = []
-			const logs = []
+			const commands: Command[] = []
+			const secrets: string[] = []
+			const logs: string[] = []
 			const git = await loadGit({
 				config: { ...config, FORK: 'forker', GIT_USERNAME: 'u', GIT_EMAIL: 'e@example.com' },
 				octokit: { repos: { createFork: async () => ({}) } },
@@ -217,7 +220,7 @@ describe('Git credentials', () => {
 			await git.createPrBranch()
 			await git.push()
 
-			const find = (name) => commands.find(({ args }) => args[0] === name)
+			const find = (name: string) => commands.find(({ args }) => args[0] === name)
 			assert.deepEqual(find('clone'), {
 				file: 'git',
 				args: [
@@ -259,9 +262,9 @@ describe('Git credentials', () => {
 describe('Git against a git server', () => {
 	const credentials = 'test-token:'
 	const header = authEnv(credentials).GIT_CONFIG_VALUE_0
-	const savedEnv = {}
-	let root
-	let server
+	const savedEnv: Record<string, string | undefined> = {}
+	let root: string
+	let server: Awaited<ReturnType<typeof startGitServer>>
 
 	before(async () => {
 		root = await makeTmpDir()
@@ -299,8 +302,8 @@ describe('Git against a git server', () => {
 		const bare = path.join(root, 'owner/repo.git')
 		const { parseConfig } = await loadConfig(`'owner/repo@${SHELL_BRANCH}':\n  - a.txt\n`)
 		const [{ repo }] = await parseConfig()
-		const commands = []
-		const logs = []
+		const commands: Command[] = []
+		const logs: string[] = []
 		const git = await loadGit({
 			config: {
 				TMP_DIR: path.join(root, 'work'),
@@ -360,9 +363,9 @@ describe('Git against a git server', () => {
 })
 
 describe('Git.push', () => {
-	async function pushWith(config) {
-		const commands = []
-		const refUpdates = []
+	async function pushWith(config: Partial<Config>) {
+		const commands: Command[] = []
+		const refUpdates: { ref: string; force: boolean }[] = []
 		const git = await loadGit({
 			config,
 			octokit: {
@@ -450,7 +453,7 @@ describe('Git.uploadGitHubBlob', () => {
 	for (const [name, bytes] of Object.entries(files)) {
 		test(`uploads a ${name} byte for byte`, async () => {
 			const dir = await makeRepo([{ 'file.bin': bytes }])
-			const blobs = []
+			const blobs: { content: string; encoding: string }[] = []
 			const git = await loadGit({
 				octokit: { git: { createBlob: async (params) => blobs.push(params) } },
 			})
@@ -503,7 +506,7 @@ describe('Git.getTreeDiff', () => {
 
 describe('git commands without a shell', () => {
 	test('clones a sync.yml branch like $(…) as one literal argument', async () => {
-		const commands = []
+		const commands: Command[] = []
 		const git = await loadGit({
 			config: { GIT_USERNAME: 'u', GIT_EMAIL: 'e@example.com' },
 			commands,
@@ -520,9 +523,9 @@ describe('git commands without a shell', () => {
 		})
 
 		const clone = commands.find(({ args }) => args[0] === 'clone')
-		assert.equal(clone.file, 'git')
-		assert.deepEqual(clone.args.slice(0, 5), ['clone', '--depth', '1', '--branch', SHELL_BRANCH])
-		assert.equal(clone.args.at(-1), path.join('tmp', `github.com/owner/repo@${SHELL_BRANCH}`))
+		assert.equal(clone!.file, 'git')
+		assert.deepEqual(clone!.args.slice(0, 5), ['clone', '--depth', '1', '--branch', SHELL_BRANCH])
+		assert.equal(clone!.args.at(-1), path.join('tmp', `github.com/owner/repo@${SHELL_BRANCH}`))
 	})
 
 	test('adds a sync.yml dest like $(…) as a literal path', async () => {
@@ -576,7 +579,7 @@ describe('git commands without a shell', () => {
 })
 
 describe('branch names', () => {
-	const repo = (branch) => ({
+	const repo = (branch: string) => ({
 		fullName: 'github.com/owner/repo',
 		uniqueName: `github.com/owner/repo@${branch}`,
 		host: 'github.com',
@@ -589,7 +592,7 @@ describe('branch names', () => {
 	// The first ones git would read as options. @{-1} is the branch checked out before
 	for (const branch of ['-b', '--upload-pack=touch${IFS}pwned', 'HEAD', '@{-1}', 'two words']) {
 		test(`rejects the sync.yml branch ${branch} before cloning`, async () => {
-			const commands = []
+			const commands: Command[] = []
 			const git = await loadGit({ config: identity, commands })
 			const quoted = JSON.stringify(branch)
 
@@ -601,7 +604,7 @@ describe('branch names', () => {
 	}
 
 	test('rejects a base branch starting with -', async () => {
-		const commands = []
+		const commands: Command[] = []
 		const git = await loadGit({
 			config: identity,
 			commands,
@@ -612,11 +615,11 @@ describe('branch names', () => {
 			message:
 				'The base branch "--output=pwned" of github.com/owner/repo is not a valid branch name',
 		})
-		assert.equal(commands.at(-1).args.join(' '), 'rev-parse --abbrev-ref HEAD')
+		assert.equal(commands.at(-1)!.args.join(' '), 'rev-parse --abbrev-ref HEAD')
 	})
 
 	test('rejects a PR branch starting with -', async () => {
-		const commands = []
+		const commands: Command[] = []
 		const git = await loadGit({ config: { BRANCH_PREFIX: '--output=pwned' }, commands })
 		git.repo = repo('main')
 
@@ -629,7 +632,7 @@ describe('branch names', () => {
 	})
 
 	test('clones and branches off a valid branch', async () => {
-		const commands = []
+		const commands: Command[] = []
 		const git = await loadGit({ config: identity, commands })
 
 		await git.initRepo(repo('release/v1.2'))

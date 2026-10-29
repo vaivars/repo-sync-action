@@ -4,10 +4,11 @@ import assert from 'node:assert/strict'
 import path from 'node:path'
 import { describe, test } from 'node:test'
 
-import { loadConfig, ROOT_DIR } from './support.js'
+import type { SyncTarget } from '../src/config.ts'
+import { loadConfig, ROOT_DIR } from './support.ts'
 
 describe('config', () => {
-	for (const [value, expected] of [[undefined, false], ['false', false], ['true', true]]) {
+	for (const [value, expected] of [[undefined, false], ['false', false], ['true', true]] as const) {
 		test(`parses IS_FINE_GRAINED ${value} as ${expected}`, async () => {
 			const { context } = await loadConfig('', { IS_FINE_GRAINED: value })
 
@@ -62,7 +63,7 @@ group:
 
 describe('repo groups', () => {
 	// The entry parseConfig makes of a file given only by its source
-	const file = (source) => ({
+	const file = (source: string) => ({
 		source,
 		dest: source,
 		template: false,
@@ -71,7 +72,7 @@ describe('repo groups', () => {
 		exclude: undefined,
 	})
 	// The repos parseConfig resolves, in order, with their files
-	const resolved = (repos) => repos.map(({ repo, files }) => [repo.uniqueName, files])
+	const resolved = (repos: SyncTarget[]) => repos.map(({ repo, files }) => [repo.uniqueName, files])
 
 	test('resolve a group name in repos to the repos of that group', async () => {
 		const { parseConfig, warnings } = await loadConfig(`
@@ -193,7 +194,9 @@ describe('action.yml', () => {
 	]
 
 	async function actionInputs() {
-		const action = yaml.load(await fs.readFile(path.join(ROOT_DIR, 'action.yml'), 'utf8'))
+		const action = yaml.load(await fs.readFile(path.join(ROOT_DIR, 'action.yml'), 'utf8')) as {
+			inputs: Record<string, { default?: string }>
+		}
 		return action.inputs
 	}
 

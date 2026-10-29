@@ -1,8 +1,33 @@
+import type * as actionsCore from '@actions/core'
 import esmock from 'esmock'
 import fs from 'fs-extra'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { after } from 'node:test'
+
+import type { Config } from '../src/config.ts'
+import type Git from '../src/git.ts'
+import type { ExecOptions } from '../src/helpers.ts'
+
+// The @actions/core functions a test replaces
+export type CoreMock = Partial<typeof actionsCore>
+
+// A fake Octokit REST client: the endpoint methods a test calls, by scope. Each takes the request's
+// parameters, whose type the test chooses
+export type FakeApi = Record<string, Record<string, (params: never) => unknown>>
+
+// A program that Git ran
+export interface Command {
+	file: string
+	args: string[]
+	env: Record<string, string> | undefined
+}
+
+// The parameters of a PR that prGit's fake Octokit created or updated
+export interface PrRequest {
+	title?: string
+	body: string
+}
 
 export const ROOT_DIR = path.resolve(import.meta.dirname, '..')
 // Templates only render below the working directory, so scratch files live in the repo. Test
@@ -11,18 +36,18 @@ export const TMP_ROOT = path.join(ROOT_DIR, `.tmp/tests-${process.pid}`)
 
 after(() => fs.remove(TMP_ROOT))
 
-export async function makeTmpDir() {
+export async function makeTmpDir(): Promise<string> {
 	await fs.ensureDir(TMP_ROOT)
 	return fs.mkdtemp(path.join(TMP_ROOT, 'case-'))
 }
 
-export async function writeTree(root, files) {
+export async function writeTree(root: string, files: Record<string, string>): Promise<void> {
 	for (const [file, content] of Object.entries(files)) {
 		await fs.outputFile(path.join(root, file), content)
 	}
 }
 
-export function gitIn(cwd, ...args) {
+export function gitIn(cwd: string, ...args: string[]): string {
 	return execFileSync('git', [
 		'-c',
 		'user.name=test',
@@ -41,16 +66,25 @@ export const silentCore = {
 	setSecret: () => {},
 }
 
-// helpers.js with @actions/core silenced; readdir sorted so that dot entries come first
-export async function loadHelpers() {
-	return esmock('../src/helpers.js', {
+// helpers.ts with @actions/core silenced; readdir sorted so that dot entries come first
+export async function loadHelpers(): Promise<typeof import('../src/helpers.ts')> {
+	return esmock('../src/helpers.ts', {
 		'@actions/core': silentCore,
-		'fs-extra': { default: { ...fs, readdir: async (dir) => (await fs.readdir(dir)).sort() } },
+		'fs-extra': {
+			default: { ...fs, readdir: async (dir: string) => (await fs.readdir(dir)).sort() },
+		},
 	})
 }
 
-// config.js reads its inputs when it is imported, so every call loads a fresh copy of it
-export async function loadConfig(syncYml, inputs = {}) {
+// config.ts reads its inputs when it is imported, so every call loads a fresh copy of it
+export async function loadConfig(
+	syncYml: string,
+	inputs: Record<string, string | undefined> = {},
+): Promise<{
+	context: Config & Record<string, unknown>
+	parseConfig: typeof import('../src/config.ts').parseConfig
+	warnings: string[]
+}> {
 	const dir = await makeTmpDir()
 	const configPath = path.join(dir, 'sync.yml')
 	await fs.writeFile(configPath, syncYml)
@@ -70,9 +104,9 @@ export async function loadConfig(syncYml, inputs = {}) {
 	}
 	process.env.GITHUB_SERVER_URL = 'https://github.com'
 
-	const warnings = []
-	const config = await esmock('../src/config.js', {
-		'@actions/core': { ...silentCore, warning: (message) => warnings.push(message) },
+	const warnings: string[] = []
+	const config = await esmock<typeof import('../src/config.ts')>('../src/config.ts', {
+		'@actions/core': { ...silentCore, warning: (message: string) => warnings.push(message) },
 	})
 	return { context: config.default, parseConfig: config.parseConfig, warnings }
 }
@@ -100,19 +134,33 @@ const GIT_CONFIG = {
 // with `run`, otherwise they print what `outputs` has for their arguments. Branch names are always
 // checked by the real git check-ref-format
 export async function loadGit(
-	{ config = {}, octokit = {}, core = silentCore, commands, outputs = {}, run = false } = {},
-) {
-	const helpers = await esmock('../src/helpers.js', { '@actions/core': core })
-	const mocks = {
-		'../src/config.js': { default: { ...GIT_CONFIG, ...config } },
+	{ config = {}, octokit = {}, core = silentCore, commands, outputs = {}, run = false }: {
+		config?: Partial<Config>
+		octokit?: FakeApi
+		core?: CoreMock
+		commands?: Command[]
+		outputs?: Record<string, string>
+		run?: boolean
+	} = {},
+): Promise<Git> {
+	const helpers = await esmock<typeof import('../src/helpers.ts')>('../src/helpers.ts', {
+		'@actions/core': core,
+	})
+	const mocks: Record<string, unknown> = {
+		'../src/config.ts': { default: { ...GIT_CONFIG, ...config } },
 		'@actions/github': { getOctokit: () => ({ rest: octokit }), context: {} },
-		'../src/helpers.js': helpers,
+		'../src/helpers.ts': helpers,
 	}
 	if (commands) {
-		const printed = { 'rev-parse --abbrev-ref HEAD': 'main', ...outputs }
-		mocks['../src/helpers.js'] = {
+		const printed: Record<string, string> = { 'rev-parse --abbrev-ref HEAD': 'main', ...outputs }
+		mocks['../src/helpers.ts'] = {
 			...helpers,
-			execFile: async (file, args, workingDir, options = {}) => {
+			execFile: async (
+				file: string,
+				args: string[],
+				workingDir?: string,
+				options: ExecOptions = {},
+			) => {
 				if (args[0] !== 'check-ref-format') commands.push({ file, args, env: options.env })
 				if (run || args[0] === 'check-ref-format') {
 					return helpers.execFile(file, args, workingDir, options)
@@ -121,14 +169,20 @@ export async function loadGit(
 			},
 		}
 	}
-	const { default: Git } = await esmock.strict('../src/git.js', mocks, { '@actions/core': core })
+	const { default: Git } = await esmock.strict<typeof import('../src/git.ts')>(
+		'../src/git.ts',
+		mocks,
+		{ '@actions/core': core },
+	)
 	return new Git()
 }
 
 // A Git instance whose fake Octokit records the parameters of every PR it creates or updates
-export async function prGit(config = {}) {
-	const requests = []
-	const respond = async (params) => {
+export async function prGit(
+	config: Partial<Config> = {},
+): Promise<{ git: Git; requests: PrRequest[] }> {
+	const requests: PrRequest[] = []
+	const respond = async (params: PrRequest) => {
 		requests.push(params)
 		return { data: { number: 1, html_url: 'https://github.com/owner/repo/pull/1' } }
 	}

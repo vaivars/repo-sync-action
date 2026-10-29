@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { describe, test } from 'node:test'
 
-import { loadHelpers, makeTmpDir, writeTree } from './support.js'
+import { loadHelpers, makeTmpDir, writeTree } from './support.ts'
 
 describe('templates', () => {
 	test('render values without HTML escaping', async () => {
@@ -22,7 +22,12 @@ describe('templates', () => {
 	// Renders the template in `files[entry]` and returns the output. `relative` passes the template
 	// path relative to the working directory, as sync.yml paths are, and `tmpDir` is a directory
 	// below the case directory to treat as TMP_DIR
-	async function render(files, entry, context = {}, { relative = false, tmpDir } = {}) {
+	async function render(
+		files: Record<string, string>,
+		entry: string,
+		context: Record<string, unknown> = {},
+		{ relative = false, tmpDir }: { relative?: boolean; tmpDir?: string } = {},
+	) {
 		const { write, setTmpDir } = await loadHelpers()
 		const dir = await makeTmpDir()
 		await writeTree(dir, files)

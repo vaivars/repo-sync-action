@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2024",
+    "lib": ["ES2024"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    // ncc emits into a virtual outDir, which TypeScript 6 wants a rootDir for
+    "rootDir": ".",
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    // Node runs src/ and tests/ as they are, stripping the types, which leaves only plain JavaScript
+    "erasableSyntaxOnly": true,
+    // Relative imports name the .ts files, as Node needs them. The bundler, which emits, gets them
+    // rewritten to .js, and ncc resolves those back to the .ts files
+    "rewriteRelativeImportExtensions": true,
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "skipLibCheck": true
+  },
+  "include": ["src", "tests"],
+  "exclude": ["tests/test-files"]
+}

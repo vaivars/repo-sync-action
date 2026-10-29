@@ -324,6 +324,7 @@ The tooling is managed with [mise](https://mise.jdx.dev):
 ```sh
 mise run install       # install dependencies
 mise run lint          # eslint
+mise run typecheck     # tsc on src/ and tests/
 mise run lint:actions  # actionlint, zizmor and shellcheck on the workflows and scripts
 mise run format        # dprint
 mise run test          # build, then run the unit and local integration tests
@@ -331,8 +332,9 @@ mise run build         # bundle src/ into dist/
 mise run ci            # everything CI checks
 ```
 
-The action runs the bundled `dist/index.js`. Rebuild and commit `dist/` together with every change
-to `src/`.
+The source in `src/` and the tests in `tests/` are TypeScript, which Node 24 runs directly: `npm start`
+runs `src/index.ts`, and `node --test 'tests/*.test.ts'` the tests. The action runs the bundled
+`dist/index.js`. Rebuild and commit `dist/` together with every change to `src/`.
 
 Releases are made from the [Conventional Commits](https://www.conventionalcommits.org) on `main`:
 a breaking change (`feat!:`) bumps the major version, `feat:` the minor and other commits the

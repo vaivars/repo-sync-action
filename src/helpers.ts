@@ -4,15 +4,33 @@ import fs from 'fs-extra'
 import { Liquid } from 'liquidjs'
 import * as path from 'path'
 
-// The target repository clones live in TMP_DIR. index.js passes it in, since importing config.js
-// here would read the action inputs
-let tmpDir
+import type { FileEntry, Template } from './config.ts'
 
-export function setTmpDir(dir) {
+// What copy and getSyncedFileList read of a file entry
+export type CopyOptions = Partial<Pick<FileEntry, 'template' | 'deleteOrphaned' | 'exclude'>>
+
+export interface ExecOptions {
+	// Trim the output, true unless false
+	trimResult?: boolean
+	// Variables added to the program's environment
+	env?: Record<string, string>
+}
+
+// The changed files of one synced source, which the PR body lists
+export interface ChangedFiles {
+	header: string
+	files: string[]
+}
+
+// The target repository clones live in TMP_DIR. index.ts passes it in, since importing config.ts
+// here would read the action inputs
+let tmpDir: string | undefined
+
+export function setTmpDir(dir: string): void {
 	tmpDir = path.resolve(dir)
 }
 
-function realpathOrSelf(file) {
+function realpathOrSelf(file: string): string {
 	try {
 		return fs.realpathSync(file)
 	} catch {
@@ -22,7 +40,7 @@ function realpathOrSelf(file) {
 
 // Paths that templates and sync sources must not read: git metadata, which can hold credentials,
 // and the clones of the target repositories in TMP_DIR
-export function isProtectedPath(file) {
+export function isProtectedPath(file: string): boolean {
 	const resolved = path.resolve(file)
 	const candidates = [resolved, realpathOrSelf(resolved)]
 	const tmpDirs = tmpDir === undefined ? [] : [tmpDir, realpathOrSelf(tmpDir)]
@@ -33,13 +51,13 @@ export function isProtectedPath(file) {
 	)
 }
 
-function assertUnprotected(file) {
+function assertUnprotected(file: string): void {
 	if (isProtectedPath(file)) throw new Error(`Templates can't read ${file}`)
 }
 
 // LiquidJS' own file system, with protected paths treated as missing and never read
 const liquidFs = new Liquid().options.fs
-const templateFs = {
+const templateFs: typeof liquidFs = {
 	...liquidFs,
 	exists: async (file) => !isProtectedPath(file) && liquidFs.exists(file),
 	existsSync: (file) => !isProtectedPath(file) && liquidFs.existsSync(file),
@@ -74,8 +92,11 @@ const liquid = new Liquid({
 })
 
 // From https://github.com/MartinKolarik/dedent-js/blob/master/src/index.ts - MIT © 2015 Martin Kolárik
-export function dedent(templateStrings, ...values) {
-	const matches = []
+export function dedent(
+	templateStrings: TemplateStringsArray | string,
+	...values: unknown[]
+): string {
+	const matches: string[] = []
 	const strings = typeof templateStrings === 'string'
 		? [templateStrings]
 		: templateStrings.slice()
@@ -99,13 +120,31 @@ export function dedent(templateStrings, ...values) {
 	strings[0] = strings[0].replace(/^\r?\n/, '')
 	let string = strings[0]
 	for (let i = 0; i < values.length; i++) {
-		string += values[i] + strings[i + 1]
+		// Concatenated as they are, like the original, so that null prints as null
+		string += (values[i] as string) + strings[i + 1]
 	}
 	return string
 }
 
 // Runs a program without a shell, so that each argument reaches it as one literal value
-function runFile(file, args, workingDir, options) {
+function runFile(
+	file: string,
+	args: string[],
+	workingDir: string | undefined,
+	options: childProcess.ExecFileOptionsWithBufferEncoding,
+): Promise<Buffer>
+function runFile(
+	file: string,
+	args: string[],
+	workingDir: string | undefined,
+	options: childProcess.ExecFileOptions,
+): Promise<string>
+function runFile(
+	file: string,
+	args: string[],
+	workingDir: string | undefined,
+	options: childProcess.ExecFileOptions | childProcess.ExecFileOptionsWithBufferEncoding,
+): Promise<string | Buffer> {
 	core.debug(`EXEC: "${file} ${args.join(' ')}" IN ${workingDir}`)
 	return new Promise((resolve, reject) => {
 		childProcess.execFile(
@@ -116,7 +155,8 @@ function runFile(file, args, workingDir, options) {
 				...options,
 			},
 			function(error, stdout) {
-				error ? reject(error) : resolve(stdout)
+				if (error) reject(error)
+				else resolve(stdout)
 			},
 		)
 	})
@@ -124,7 +164,12 @@ function runFile(file, args, workingDir, options) {
 
 // Runs a program without a shell and resolves with its stdout as text, trimmed unless trimResult
 // is false. The variables in env are added to the program's environment
-export async function execFile(file, args, workingDir, { trimResult = true, env } = {}) {
+export async function execFile(
+	file: string,
+	args: string[],
+	workingDir?: string,
+	{ trimResult = true, env }: ExecOptions = {},
+): Promise<string> {
 	const stdout = await runFile(file, args, workingDir, {
 		maxBuffer: 1024 * 1024 * 4,
 		env: env === undefined ? undefined : { ...process.env, ...env },
@@ -133,23 +178,23 @@ export async function execFile(file, args, workingDir, { trimResult = true, env 
 }
 
 // Runs a program without a shell and resolves with its stdout as raw bytes, with no size limit
-export function execFileBuffer(file, args, workingDir) {
+export function execFileBuffer(file: string, args: string[], workingDir?: string): Promise<Buffer> {
 	return runFile(file, args, workingDir, {
 		encoding: 'buffer',
 		maxBuffer: Infinity,
 	})
 }
 
-export function addTrailingSlash(str) {
+export function addTrailingSlash(str: string): string {
 	return str.endsWith('/') ? str : str + '/'
 }
 
-export async function pathIsDirectory(path) {
+export async function pathIsDirectory(path: string): Promise<boolean> {
 	const stat = await fs.lstat(path)
 	return stat.isDirectory()
 }
 
-export async function write(src, dest, context) {
+export async function write(src: string, dest: string, context: Template): Promise<void> {
 	if (typeof context !== 'object') {
 		context = {}
 	}
@@ -159,12 +204,12 @@ export async function write(src, dest, context) {
 
 // An exclude entry matches the path itself and everything below it, the same way fs.copy skips
 // the whole subtree of a directory that the filter rejects. Entries carry the source prefix
-function isExcluded(exclude, filePath) {
+function isExcluded(exclude: string[] | undefined, filePath: string): boolean {
 	return exclude !== undefined
 		&& exclude.some((entry) => filePath === entry || filePath.startsWith(addTrailingSlash(entry)))
 }
 
-export function createFilterFunc(file) {
+export function createFilterFunc(file: CopyOptions): (filePath: string) => boolean {
 	return (filePath) => {
 		if (isExcluded(file.exclude, filePath)) {
 			core.debug(`Excluding file ${filePath} since it or a parent directory is excluded.`)
@@ -174,7 +219,12 @@ export function createFilterFunc(file) {
 	}
 }
 
-export async function copy(src, dest, isDirectory, file) {
+export async function copy(
+	src: string,
+	dest: string,
+	isDirectory: boolean,
+	file: CopyOptions,
+): Promise<void> {
 	const deleteOrphaned = isDirectory && file.deleteOrphaned
 	const filterFunc = createFilterFunc(file)
 
@@ -238,7 +288,12 @@ export async function copy(src, dest, isDirectory, file) {
 	}
 }
 
-export async function getSyncedFileList(src, dest, isDirectory, file) {
+export async function getSyncedFileList(
+	src: string,
+	dest: string,
+	isDirectory: boolean,
+	file: CopyOptions,
+): Promise<string[]> {
 	const filterFunc = createFilterFunc(file)
 
 	if (isDirectory) {
@@ -254,13 +309,13 @@ export async function getSyncedFileList(src, dest, isDirectory, file) {
 	}
 }
 
-export async function remove(src) {
+export async function remove(src: string): Promise<void> {
 	core.debug(`RM: ${src}`)
 
 	return fs.remove(src)
 }
 
-export function arrayEquals(array1, array2) {
+export function arrayEquals(array1: unknown, array2: unknown): boolean {
 	return (
 		Array.isArray(array1)
 		&& Array.isArray(array2)
@@ -274,7 +329,7 @@ export const PR_BODY_MAX_LENGTH = 65536
 
 // Renders the changed files of each synced source ({ header, files }) as a collapsed list. Files
 // that do not fit into maxLength characters are summed up in an "...and N more" line instead
-export function formatChangedFiles(sections, maxLength = Infinity) {
+export function formatChangedFiles(sections: ChangedFiles[], maxLength = Infinity): string {
 	if (sections.length === 0) return ''
 
 	const start = '<details>\n<summary>Changed files</summary>\n<ul>\n'
@@ -285,7 +340,7 @@ export function formatChangedFiles(sections, maxLength = Infinity) {
 	if (full.length <= maxLength) return full
 
 	const total = sections.reduce((count, { files }) => count + files.length, 0)
-	const pieces = sections.flatMap(({ header, files }, i) => [
+	const pieces: { text: string; isFile?: boolean }[] = sections.flatMap(({ header, files }, i) => [
 		{ text: `${i === 0 ? '' : '</li>'}<li>${header}\n` },
 		...files.map((file) => ({ text: `\n${file}`, isFile: true })),
 	])
@@ -303,15 +358,26 @@ export function formatChangedFiles(sections, maxLength = Infinity) {
 	return `${text}${text === start ? '<li>' : '\n'}...and ${total - listed} more</li>${end}`
 }
 
-// GitHub's answer when createRef targets a branch that already exists. Octokit
-// appends the docs URL to the message, so match its start, not all of it.
-export function isReferenceExistsError(error) {
-	return error.status === 422 && error.message.startsWith('Reference already exists')
+// The parts of Octokit's RequestError that isReferenceExistsError reads
+interface RequestErrorLike {
+	status?: unknown
+	message: string
 }
 
-// Custom readfiles implementation to replace node-readfiles
-export async function readfiles(dir, options = {}) {
-	const files = []
+// GitHub's answer when createRef targets a branch that already exists. Octokit
+// appends the docs URL to the message, so match its start, not all of it.
+export function isReferenceExistsError(error: unknown): boolean {
+	const requestError = error as RequestErrorLike
+	return requestError.status === 422 && requestError.message.startsWith('Reference already exists')
+}
+
+// Custom readfiles implementation to replace node-readfiles. The options are accepted, but hidden
+// files are always listed
+export async function readfiles(
+	dir: string,
+	options: { readContents?: boolean; hidden?: boolean } = {},
+): Promise<string[]> {
+	const files: string[] = []
 	try {
 		const items = await fs.readdir(dir)
 		for (const item of items) {
@@ -325,7 +391,7 @@ export async function readfiles(dir, options = {}) {
 			}
 		}
 	} catch (err) {
-		if (err.code === 'ENOENT') {
+		if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
 			return []
 		}
 		throw err

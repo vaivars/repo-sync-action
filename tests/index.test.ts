@@ -2,13 +2,13 @@ import esmock from 'esmock'
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
-import { prGit, silentCore } from './support.js'
+import { prGit, silentCore } from './support.ts'
 
 describe('run', () => {
 	test("truncates a long file list so that the body stays under GitHub's limit", async () => {
 		const fileCount = 3000
 		const { git, requests } = await prGit({ PR_BODY: 'x'.repeat(1000) })
-		const failures = []
+		const failures: string[] = []
 		let statusChecks = 0
 		Object.assign(git, {
 			initRepo: async () => {},
@@ -23,9 +23,9 @@ describe('run', () => {
 			hasChanges: async () => ++statusChecks === 1,
 			workingDir: 'work',
 		})
-		const helpers = await import('../src/helpers.js')
-		const { run } = await esmock.strict('../src/index.js', {
-			'../src/config.js': {
+		const helpers = await import('../src/helpers.ts')
+		const { run } = await esmock.strict<typeof import('../src/index.ts')>('../src/index.ts', {
+			'../src/config.ts': {
 				default: {
 					COMMIT_EACH_FILE: true,
 					COMMIT_PREFIX: '🔄',
@@ -49,18 +49,18 @@ describe('run', () => {
 					files: [{ source: 'src-dir', dest: 'dest-dir', replace: true }],
 				}],
 			},
-			'../src/git.js': {
+			'../src/git.ts': {
 				default: class {
 					constructor() {
 						return git
 					}
 				},
 			},
-			'../src/helpers.js': {
+			'../src/helpers.ts': {
 				...helpers,
 				copy: async () => {},
 				pathIsDirectory: async () => true,
-				getSyncedFileList: async (_src, dest) =>
+				getSyncedFileList: async (_src: string, dest: string) =>
 					Array.from(
 						{ length: fileCount },
 						(_, i) => `${dest}/some/deeply/nested/directory/file-${i}.txt`,
@@ -73,7 +73,7 @@ describe('run', () => {
 				...silentCore,
 				notice: () => {},
 				setOutput: () => {},
-				setFailed: (message) => failures.push(message),
+				setFailed: (message: string) => failures.push(message),
 			},
 		})
 
@@ -83,8 +83,8 @@ describe('run', () => {
 		assert.equal(requests.length, 1)
 		const { body } = requests[0]
 		assert.ok(body.length <= 65536, `body is ${body.length} characters`)
-		const listed = body.match(/^`some\/deeply\/nested\/directory\/file-\d+\.txt` - unchanged$/gm)
-		const [, more] = body.match(/\n\.\.\.and (\d+) more<\/li>\n<\/ul>\n<\/details>\n/)
+		const listed = body.match(/^`some\/deeply\/nested\/directory\/file-\d+\.txt` - unchanged$/gm)!
+		const [, more] = body.match(/\n\.\.\.and (\d+) more<\/li>\n<\/ul>\n<\/details>\n/)!
 		assert.equal(listed.length + Number(more), fileCount)
 
 		// The resync warning added on the next run has to fit as well
