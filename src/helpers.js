@@ -1,11 +1,19 @@
 import * as core from '@actions/core'
 import { exec, execFile } from 'child_process'
 import fs from 'fs-extra'
-import nunjucks from 'nunjucks'
+import { Liquid } from 'liquidjs'
 import * as path from 'path'
 
-// Templates are config and code files, not HTML, so values are inserted as they are
-nunjucks.configure({ autoescape: false, trimBlocks: true, lstripBlocks: true })
+// Templates may come from anyone who can change the source repository, so they are rendered
+// without access to JavaScript objects and can only load files below the working directory.
+// Values are inserted as they are, since templates are config and code files, not HTML
+const liquid = new Liquid({
+	root: process.cwd(),
+	strictFilters: true,
+	ownPropertyOnly: true,
+	// Empty strings and 0 are false, as they were with Nunjucks in v1
+	jsTruthy: true,
+})
 
 // From https://github.com/MartinKolarik/dedent-js/blob/master/src/index.ts - MIT © 2015 Martin Kolárik
 export function dedent(templateStrings, ...values) {
@@ -86,7 +94,7 @@ export async function write(src, dest, context) {
 	if (typeof context !== 'object') {
 		context = {}
 	}
-	const content = nunjucks.render(src, context)
+	const content = await liquid.renderFile(src, context)
 	await fs.outputFile(dest, content)
 }
 

@@ -26,7 +26,7 @@ and opens a pull request there with the changes (or updates the one it opened be
        runs-on: ubuntu-latest
        steps:
          - uses: actions/checkout@v7
-         - uses: vaivars/repo-sync-action@v1
+         - uses: vaivars/repo-sync-action@v2
            with:
              GH_PAT: ${{ secrets.GH_PAT }}
    ```
@@ -116,8 +116,7 @@ owner/repo:
 
 ### Templates
 
-Templates are rendered with [Nunjucks](https://mozilla.github.io/nunjucks/templating.html), which
-uses Jinja-style syntax:
+Templates use [Liquid](https://liquidjs.com/tutorials/intro-to-liquid.html) syntax:
 
 ```yml
 owner/repo:
@@ -134,10 +133,15 @@ owner/repo:
 ```
 
 - Use `template: true` for templates without variables.
-- `{% extends './base.yml' %}` and `{% include %}` paths that start with `./` are resolved relative
-  to the template.
-- GitHub Actions expressions like `${{ secrets.TOKEN }}` use the same braces as Nunjucks. Wrap them
-  in `{% raw %}…{% endraw %}` to keep them in a templated workflow file.
+- `{% layout %}`, `{% include %}` and `{% render %}` paths that start with `./` are resolved relative
+  to the template. Other paths are relative to the repository root.
+- Templates are sandboxed. They can't access JavaScript objects or load files outside the
+  repository, and unknown tags or filters fail the run.
+- Values are inserted as they are, without HTML escaping. Use `| escape` where you need it.
+- Empty strings and `0` are false in conditions.
+- Whitespace is kept as written. Use `{%-` and `-%}` to trim it around tags.
+- GitHub Actions expressions like `${{ secrets.TOKEN }}` use the same braces as Liquid. Wrap them in
+  `{% raw %}…{% endraw %}` to keep them in a templated workflow file.
 
 ### Groups
 
@@ -210,7 +214,7 @@ Alternatives to this flow:
 A workflow step that customizes the pull request:
 
 ```yml
-- uses: vaivars/repo-sync-action@v1
+- uses: vaivars/repo-sync-action@v2
   with:
     GH_PAT: ${{ secrets.GH_PAT }}
     PR_LABELS: |
@@ -260,7 +264,33 @@ One of `GH_PAT` or `GH_INSTALLATION_TOKEN` is required. All other inputs are opt
 
 ## Versioning
 
-Use `@v1` for the latest 1.x release, or pin an exact release tag (`@v1.x.y`) or a commit SHA.
+Use `@v2` for the latest 2.x release, or pin an exact release tag (`@v2.x.y`) or a commit SHA.
+
+v1 is deprecated and no longer updated. Its final release is `v1.0.10`.
+
+## Migrating from v1
+
+v2 renders templates with LiquidJS instead of Nunjucks, because Nunjucks templates can run any
+JavaScript with the action's token. Inputs and the rest of `sync.yml` are unchanged.
+
+Templates that only use `{{ variable }}` work as before. Everything else needs these changes:
+
+| v1 (Nunjucks)                                                             | v2 (Liquid)                                        |
+| ------------------------------------------------------------------------- | -------------------------------------------------- |
+| `{% extends './base.yml' %}`                                              | `{% layout './base.yml' %}`                        |
+| `{% set x = 1 %}`                                                         | `{% assign x = 1 %}`                               |
+| `{{ a + b }}`                                                             | `{{ a \| plus: b }}`                               |
+| `{{ a if cond else b }}`                                                  | `{% if cond %}{{ a }}{% else %}{{ b }}{% endif %}` |
+| `{{ s \| upper }}`, `{{ s \| lower }}`                                    | `{{ s \| upcase }}`, `{{ s \| downcase }}`         |
+| `{{ list \| length }}`                                                    | `{{ list \| size }}`                               |
+| `{{ x \| default('y') }}`                                                 | `{{ x \| default: 'y' }}`                          |
+| `loop.index`                                                              | `forloop.index`                                    |
+| `{% macro %}`                                                             | `{% render './partial.txt', arg: value %}`         |
+| `{{ x \| safe }}`                                                         | `{{ x }}`                                          |
+| Line breaks after block tags and the indentation before them were removed | Whitespace is kept; trim it with `{%-` and `-%}`   |
+
+Unknown tags and filters fail the run with an error. Inline `if` expressions don't: in v2,
+`{{ a if cond else b }}` always renders `a`, so search your templates for them before upgrading.
 
 ## Development
 

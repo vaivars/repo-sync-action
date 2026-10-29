@@ -9,7 +9,7 @@ import { after, describe, test } from 'node:test'
 import { isReferenceExistsError } from '../src/helpers.js'
 
 const ROOT_DIR = path.resolve(import.meta.dirname, '..')
-// nunjucks only renders templates below the working directory, so scratch files live in the repo
+// Templates only render below the working directory, so scratch files live in the repo
 const TMP_ROOT = path.join(ROOT_DIR, '.tmp/helpers-tests')
 
 after(() => fs.remove(TMP_ROOT))
@@ -645,6 +645,81 @@ describe('templates', () => {
 		await write(src, dest, { command: `echo "a & b" > 'c' <d>` })
 
 		assert.equal(await fs.readFile(dest, 'utf8'), `run: echo "a & b" > 'c' <d>\n`)
+	})
+
+	// Renders the template in `files[entry]` and returns the output
+	async function render(files, entry, context = {}) {
+		const { write } = await loadHelpers()
+		const dir = await makeTmpDir()
+		await writeTree(dir, files)
+		const dest = path.join(dir, 'out')
+		await write(path.join(dir, entry), dest, context)
+		return fs.readFile(dest, 'utf8')
+	}
+
+	test('inherit layouts and blocks relative to the template', async () => {
+		const output = await render(
+			{
+				'shared/base.yml': 'name: {% block title %}base{% endblock %}\n',
+				'child.yml': `{% layout './shared/base.yml' %}{% block title %}{{ app }}{% endblock %}`,
+			},
+			'child.yml',
+			{ app: 'my-app' },
+		)
+
+		assert.equal(output, 'name: my-app\n')
+	})
+
+	test('keep GitHub Actions expressions inside raw blocks', async () => {
+		const output = await render({
+			'workflow.yml': '{% raw %}token: ${{ secrets.GH_PAT }}{% endraw %}',
+		}, 'workflow.yml')
+
+		assert.equal(output, 'token: ${{ secrets.GH_PAT }}')
+	})
+
+	test('treat empty strings and zero as false', async () => {
+		const output = await render(
+			{
+				'flags.txt':
+					'{% if empty %}empty{% endif %}{% if zero %}zero{% endif %}{% if name %}{{ name }}{% endif %}',
+			},
+			'flags.txt',
+			{ empty: '', zero: 0, name: 'set' },
+		)
+
+		assert.equal(output, 'set')
+	})
+
+	test('do not let templates reach JavaScript objects', async () => {
+		const output = await render(
+			{
+				'escape.txt':
+					'{% assign s = "x" %}[{{ s.constructor }}][{{ obj.__proto__ }}][{{ obj.toString }}]',
+			},
+			'escape.txt',
+			{ obj: { a: 1 } },
+		)
+
+		assert.equal(output, '[][][]')
+	})
+
+	test('reject unknown filters', async () => {
+		await assert.rejects(
+			render({ 'filter.txt': '{{ 1 | valueOf }}' }, 'filter.txt'),
+			/undefined filter: valueOf/,
+		)
+	})
+
+	test('refuse to include files outside the working directory', async () => {
+		await assert.rejects(
+			render({ 'include.txt': `{% include '/etc/hosts' %}` }, 'include.txt'),
+			/Failed to lookup/,
+		)
+		await assert.rejects(
+			render({ 'include.txt': `{% include '../../../../../../../etc/hosts' %}` }, 'include.txt'),
+			/Failed to lookup/,
+		)
 	})
 })
 
