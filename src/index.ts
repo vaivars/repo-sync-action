@@ -3,6 +3,7 @@ import * as fs from 'fs'
 import { pathToFileURL } from 'url'
 
 import { changedFiles } from './changes.ts'
+import { errorDetails } from './errors.ts'
 import Git from './git.ts'
 import type { ExistingPr } from './github.ts'
 import {
@@ -183,8 +184,7 @@ async function processRepository(item: SyncTarget, git: Git, prUrls: string[]): 
 		core.info('\t')
 	} catch (err) {
 		core.setFailed((err as Error).message)
-		// core.debug logs a value other than a string as JSON, which is {} for most errors
-		core.debug(err as string)
+		core.debug(errorDetails(err))
 	}
 }
 
@@ -265,6 +265,6 @@ async function syncFile(file: FileEntry, git: Git, modified: SyncCommit[]): Prom
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
 	run().catch((err: unknown) => {
 		core.setFailed((err as Error).message)
-		core.debug(err as string)
+		core.debug(errorDetails(err))
 	})
 }

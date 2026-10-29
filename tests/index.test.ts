@@ -93,3 +93,56 @@ describe('run', () => {
 		assert.ok(requests[1].body.length <= 65536, `body is ${requests[1].body.length} characters`)
 	})
 })
+
+describe('run with a repository that fails', () => {
+	// Runs the action for one repository whose clone throws `thrown`, and returns what it reported
+	async function failWith(thrown: unknown) {
+		const failures: unknown[] = []
+		const debugs: unknown[] = []
+		const helpers = await import('../src/helpers.ts')
+		const { run } = await esmock.strict<typeof import('../src/index.ts')>('../src/index.ts', {
+			'../src/config.ts': {
+				default: { TMP_DIR: 'tmp', SKIP_CLEANUP: true, SKIP_PR: false, DRY_RUN: false },
+				parseConfig: async () => [{
+					repo: { name: 'repo', user: 'owner', fullName: 'github.com/owner/repo', branch: 'main' },
+					files: [],
+				}],
+			},
+			'../src/git.ts': {
+				default: class {
+					async initRepo() {
+						throw thrown
+					}
+				},
+			},
+			'../src/helpers.ts': helpers,
+			'@actions/core': {
+				...silentCore,
+				setFailed: (message: unknown) => failures.push(message),
+				debug: (message: unknown) => debugs.push(message),
+			},
+		})
+
+		await run()
+
+		return { failures, debugs }
+	}
+
+	test('fails it with the message and debug-logs the stack of an Error', async () => {
+		const error = new Error('boom')
+
+		assert.deepEqual(await failWith(error), { failures: ['boom'], debugs: [error.stack] })
+		assert.match(error.stack!, /^Error: boom\n {4}at /)
+	})
+
+	test('debug-logs the message of an Error without a stack', async () => {
+		const error = Object.assign(new Error('no stack'), { stack: undefined })
+
+		assert.deepEqual(await failWith(error), { failures: ['no stack'], debugs: ['no stack'] })
+	})
+
+	test('debug-logs anything else thrown as a string', async () => {
+		assert.deepEqual((await failWith({ code: 42 })).debugs, ['[object Object]'])
+		assert.deepEqual((await failWith('text')).debugs, ['text'])
+	})
+})
