@@ -1,8 +1,9 @@
 name: Release
 
+# `released` covers publishing a full release and promoting a pre-release, never pre-releases
 on:
   release:
-    types: [published]
+    types: [released]
 
 permissions:
   contents: write
@@ -11,7 +12,6 @@ jobs:
   major-tag:
     name: Move major version tag
     runs-on: ubuntu-latest
-    if: ${{ !github.event.release.prerelease }}
     steps:
       - name: Point the major tag at this release
         env:
@@ -23,8 +23,18 @@ jobs:
             exit 0
           fi
           major="${TAG%%.*}"
+
+          # Only move forward, so a backport release doesn't pull the major tag back
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$major." --paginate \
+            --jq '.[].ref | ltrimstr("refs/tags/")' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+          if [ "$latest" != "$TAG" ]; then
+            echo "::notice::$latest is newer than $TAG, leaving $major alone"
+            exit 0
+          fi
+
           sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)
-          if gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/$major" --silent 2>/dev/null; then
+          # git/ref (singular) matches exactly; git/refs would also match v2.0.0 when v2 is missing
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$major" --silent 2>/dev/null; then
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$major" -f sha="$sha" -F force=true --silent
           else
             gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$major" -f sha="$sha" --silent
