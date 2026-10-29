@@ -1,76 +1,82 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
-import { changedFiles, statusText } from '../src/changes.ts'
-import { parseFileStatuses } from '../src/git-output.ts'
-
-describe('statusText', () => {
-	const cases = [
-		['A  ', 'created'],
-		['?', 'created'],
-		[' M ', 'updated'],
-		['AM ', 'updated'],
-		['D  ', 'deleted'],
-		['MD ', 'deleted'],
-		['R', 'unchanged'],
-		['', 'unchanged'],
-	]
-
-	for (const [mode, text] of cases) {
-		test(`calls ${JSON.stringify(mode)} ${text}`, () => {
-			assert.equal(statusText(mode), text)
-		})
-	}
-})
+import { changedFiles } from '../src/changes.ts'
 
 describe('changedFiles', () => {
-	const statuses = new Map([['out/a.txt', 'A '], ['out/sub/b.txt', ' M'], ['single.txt', 'D ']])
+	const directory = { source: 'src/', dest: 'out', isDirectory: true }
 
-	test('lists the files of a directory relative to it, with their status', () => {
+	test('describes each staged change of a directory, relative to it', () => {
 		assert.deepEqual(
-			changedFiles(
-				{ source: 'src/', dest: 'out', isDirectory: true },
-				['out/a.txt', 'out/sub/b.txt', 'out/c.txt'],
-				statuses,
-			),
+			changedFiles(directory, [], [
+				{ status: 'A', path: 'out/new file.txt' },
+				{ status: 'M', path: 'out/sub/ünï.txt' },
+				{ status: 'T', path: 'out/link' },
+				{ status: 'D', path: 'out/gone.txt' },
+				{ status: 'R100', from: 'out/old.txt', path: 'out/sub/new.txt' },
+				{ status: 'R087', from: 'out/a.txt', path: 'out/b.txt' },
+			]),
 			{
 				header: 'From remote directory <code>src/</code>, synced the following files:',
-				files: ['`a.txt` - created', '`sub/b.txt` - updated', '`c.txt` - unchanged'],
+				files: [
+					'`new file.txt` - created',
+					'`sub/ünï.txt` - updated',
+					'`link` - updated',
+					'`gone.txt` - deleted',
+					'`old.txt` → `sub/new.txt` - renamed',
+					'`a.txt` → `b.txt` - renamed and updated',
+				],
+				unchanged: 0,
 			},
 		)
 	})
 
-	test('lists a file by its name', () => {
+	test('describes a single file by its name', () => {
 		assert.deepEqual(
 			changedFiles(
-				{ source: 'templates/single.txt', dest: 'single.txt', isDirectory: false },
-				['single.txt'],
-				statuses,
+				{ source: 'templates/single.txt', dest: 'conf/single.txt', isDirectory: false },
+				['conf/single.txt'],
+				[{ status: 'M', path: 'conf/single.txt' }],
 			),
 			{
 				header: 'From remote file <code>templates/single.txt</code>, synced the following files:',
-				files: ['`single.txt` - deleted'],
+				files: ['`single.txt` - updated'],
+				unchanged: 0,
 			},
 		)
 	})
 
-	test('takes the status of files named like Object properties from git only', () => {
-		const fileStatuses = parseFileStatuses('A  out/constructor\0A  out/__proto__\0')
+	test('counts the synced files that did not change', () => {
+		const synced = ['out/a.txt', 'out/b.txt', 'out/c.txt', 'out/new.txt']
+		const unchanged = (changes: { status: string; path: string; from?: string }[]) =>
+			changedFiles(directory, synced, changes).unchanged
 
-		assert.deepEqual(
-			changedFiles(
-				{ source: 'src/', dest: 'out', isDirectory: true },
-				['out/constructor', 'out/__proto__', 'out/toString'],
-				fileStatuses,
-			).files,
-			['`constructor` - created', '`__proto__` - created', '`toString` - unchanged'],
+		assert.equal(unchanged([{ status: 'A', path: 'out/a.txt' }]), 3)
+		assert.equal(
+			unchanged([
+				{ status: 'M', path: 'out/a.txt' },
+				{ status: 'M', path: 'out/b.txt' },
+				{ status: 'R100', from: 'out/old.txt', path: 'out/new.txt' },
+			]),
+			1,
 		)
-		for (const name of ['constructor', '__proto__', 'hasOwnProperty']) {
-			assert.deepEqual(
-				changedFiles({ source: 'a', dest: name, isDirectory: false }, [name], parseFileStatuses(''))
-					.files,
-				[`\`${name}\` - unchanged`],
-			)
-		}
+		assert.equal(
+			unchanged(synced.map((path) => ({ status: 'M', path }))),
+			0,
+		)
+	})
+
+	test('treats files named like Object properties like any other', () => {
+		assert.deepEqual(
+			changedFiles(directory, ['out/constructor', 'out/__proto__', 'out/toString'], [
+				{ status: 'A', path: 'out/constructor' },
+				{ status: 'A', path: 'out/__proto__' },
+			]),
+			{
+				header: 'From remote directory <code>src/</code>, synced the following files:',
+				files: ['`constructor` - created', '`__proto__` - created'],
+				unchanged: 1,
+			},
+		)
 	})
 })

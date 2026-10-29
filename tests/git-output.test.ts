@@ -5,6 +5,7 @@ import {
 	hasStatusChanges,
 	parseFileStatuses,
 	parseGitDiffOutput,
+	parseNameStatus,
 	parseTreeDiff,
 	parseTreeId,
 } from '../src/git-output.ts'
@@ -39,6 +40,28 @@ describe('parseGitDiffOutput', () => {
 
 	test('finds no files in empty output', () => {
 		assert.deepEqual(parseGitDiffOutput(''), {})
+	})
+})
+
+describe('parseNameStatus', () => {
+	test('reads changes and renames, with their paths verbatim', () => {
+		const output = 'M\0conf/change.txt\0'
+			+ 'R100\0conf/old place.txt\0conf/dir with space/new place.txt\0'
+			+ 'R087\0conf/a\nb.txt\0conf/ünï.txt\0'
+			+ 'D\0conf/gone.txt\0A\0 leading space.txt\0T\0conf/link\0'
+
+		assert.deepEqual(parseNameStatus(output), [
+			{ status: 'M', path: 'conf/change.txt' },
+			{ status: 'R100', from: 'conf/old place.txt', path: 'conf/dir with space/new place.txt' },
+			{ status: 'R087', from: 'conf/a\nb.txt', path: 'conf/ünï.txt' },
+			{ status: 'D', path: 'conf/gone.txt' },
+			{ status: 'A', path: ' leading space.txt' },
+			{ status: 'T', path: 'conf/link' },
+		])
+	})
+
+	test('finds no changes in empty output', () => {
+		assert.deepEqual(parseNameStatus(''), [])
 	})
 })
 

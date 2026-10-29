@@ -38,11 +38,12 @@ const {
 	TEAM_REVIEWERS,
 } = config
 
-// A commit the sync made: one per file entry with COMMIT_EACH_FILE, which lists the entry's files,
-// and one with the files left over
-type SyncCommit =
-	| (ChangedFiles & { dest: string; source: string; commitMessage: string })
-	| { dest: string; files?: undefined; commitMessage: string | undefined }
+// A commit the sync made: one per file entry with COMMIT_EACH_FILE, and one with the files left over
+interface SyncCommit {
+	dest: string
+	source?: string
+	commitMessage: string | undefined
+}
 
 export async function run(): Promise<void> {
 	setTmpDir(TMP_DIR)
@@ -96,10 +97,12 @@ async function processRepository(item: SyncTarget, git: Git, prUrls: string[]): 
 
 		core.info(`Locally syncing file(s) between source and target repository`)
 		const modified: SyncCommit[] = []
+		// What the PR body lists: the changes that each entry staged
+		const entryChanges: ChangedFiles[] = []
 
 		// Loop through all selected files of the source repo
 		for (const file of item.files) {
-			await syncFile(file, git, modified)
+			await syncFile(file, git, modified, entryChanges)
 		}
 
 		if (DRY_RUN) {
@@ -138,13 +141,8 @@ async function processRepository(item: SyncTarget, git: Git, prUrls: string[]): 
 		await git.push()
 
 		if (SKIP_PR === false) {
-			// Only the per-file commits have a file list
-			const fileCommits = modified.filter((file): file is ChangedFiles & SyncCommit =>
-				file.files !== undefined
-			)
-
 			const pullRequest = await git.createOrUpdatePr(
-				COMMIT_EACH_FILE ? fileCommits : [],
+				COMMIT_EACH_FILE ? entryChanges : [],
 				prTitle(originalMessage, COMMIT_AS_PR_TITLE),
 				prBody,
 			)
@@ -188,7 +186,12 @@ async function processRepository(item: SyncTarget, git: Git, prUrls: string[]): 
 	}
 }
 
-async function syncFile(file: FileEntry, git: Git, modified: SyncCommit[]): Promise<void> {
+async function syncFile(
+	file: FileEntry,
+	git: Git,
+	modified: SyncCommit[],
+	entryChanges: ChangedFiles[],
+): Promise<void> {
 	if (isProtectedPath(file.source)) {
 		return core.warning(`Source ${file.source} is inside .git or TMP_DIR and is not synced`)
 	}
@@ -231,18 +234,8 @@ async function syncFile(file: FileEntry, git: Git, modified: SyncCommit[]): Prom
 
 		core.debug(`Creating commit for file(s) ${file.dest}`)
 
-		const syncedFiles = await getSyncedFileList(
-			file.source,
-			file.dest,
-			isDirectory,
-			file,
-		)
-		const fileStatuses = await git.getFileStatuses()
-		const { header, files } = changedFiles(
-			{ source: file.source, dest: file.dest, isDirectory },
-			syncedFiles,
-			fileStatuses,
-		)
+		// Read before the commit, which takes them out of the index
+		const changes = await stagedChangesOf(file, isDirectory, git)
 
 		const commitMessage = fileCommitMessage(originalMessageOf(ORIGINAL_MESSAGE, git), {
 			prefix: COMMIT_PREFIX,
@@ -255,11 +248,24 @@ async function syncFile(file: FileEntry, git: Git, modified: SyncCommit[]): Prom
 		modified.push({
 			dest: file.dest,
 			source: file.source,
-			header,
-			files,
 			commitMessage,
 		})
+		if (changes) entryChanges.push(changes)
 	}
+}
+
+// What the PR body lists for an entry: the changes it staged below its dest, unless there are none.
+// An entry whose dest overlaps another's can list some of the same files
+async function stagedChangesOf(
+	file: FileEntry,
+	isDirectory: boolean,
+	git: Git,
+): Promise<ChangedFiles | undefined> {
+	const changes = await git.stagedChanges(file.dest)
+	if (changes.length === 0) return undefined
+
+	const syncedFiles = await getSyncedFileList(file.source, file.dest, isDirectory, file)
+	return changedFiles({ source: file.source, dest: file.dest, isDirectory }, syncedFiles, changes)
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

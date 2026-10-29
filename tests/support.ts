@@ -47,6 +47,25 @@ export async function writeTree(root: string, files: Record<string, string>): Pr
 	}
 }
 
+// A git repo with one commit per entry of `commits`; a null content deletes the file
+export async function makeRepo(commits: Record<string, string | Buffer | null>[]): Promise<string> {
+	const dir = await makeTmpDir()
+	gitIn(dir, 'init', '-q')
+	// For the commits that Git makes in it
+	gitIn(dir, 'config', 'user.name', 'test')
+	gitIn(dir, 'config', 'user.email', 'test@example.com')
+	gitIn(dir, 'config', 'commit.gpgsign', 'false')
+	for (const files of commits) {
+		for (const [file, content] of Object.entries(files)) {
+			if (content === null) await fs.remove(path.join(dir, file))
+			else await fs.outputFile(path.join(dir, file), content)
+		}
+		gitIn(dir, 'add', '-A')
+		gitIn(dir, 'commit', '-q', '-m', 'commit')
+	}
+	return dir
+}
+
 export function gitIn(cwd: string, ...args: string[]): string {
 	return execFileSync('git', [
 		'-c',

@@ -7,29 +7,9 @@ import type { AddressInfo } from 'node:net'
 import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
 
-import { changedFiles } from '../src/changes.ts'
 import type { Config } from '../src/config.ts'
 import type { Command, FakeApi } from './support.ts'
-import { gitIn, loadConfig, loadGit, makeTmpDir, prGit, silentCore } from './support.ts'
-
-// A git repo with one commit per entry of `commits`; a null content deletes the file
-async function makeRepo(commits: Record<string, string | Buffer | null>[]) {
-	const dir = await makeTmpDir()
-	gitIn(dir, 'init', '-q')
-	// For the commits that Git makes in it
-	gitIn(dir, 'config', 'user.name', 'test')
-	gitIn(dir, 'config', 'user.email', 'test@example.com')
-	gitIn(dir, 'config', 'commit.gpgsign', 'false')
-	for (const files of commits) {
-		for (const [file, content] of Object.entries(files)) {
-			if (content === null) await fs.remove(path.join(dir, file))
-			else await fs.outputFile(path.join(dir, file), content)
-		}
-		gitIn(dir, 'add', '-A')
-		gitIn(dir, 'commit', '-q', '-m', 'commit')
-	}
-	return dir
-}
+import { gitIn, loadConfig, loadGit, makeRepo, makeTmpDir, prGit, silentCore } from './support.ts'
 
 // The sha GitHub gives a blob with these bytes
 function gitBlobSha(bytes: Buffer) {
@@ -485,18 +465,74 @@ describe('Git.getFileStatuses', () => {
 		const git = await loadGit()
 		git.workingDir = dir
 
-		const { files } = changedFiles(
-			{ source: 'src/', dest: '.', isDirectory: true },
-			['changed file.txt', 'removed ünï.txt', 'ädded "quoted".txt'],
+		assert.deepEqual(
 			await git.getFileStatuses(),
+			new Map([
+				['changed file.txt', 'M '],
+				['dir with space/new name.txt', 'R '],
+				['removed ünï.txt', 'D '],
+				['ädded "quoted".txt', 'A '],
+			]),
 		)
-
-		assert.deepEqual(files, [
-			'`changed file.txt` - updated',
-			'`removed ünï.txt` - deleted',
-			'`ädded "quoted".txt` - created',
-		])
 		assert.equal(await git.hasChanges(), true)
+	})
+})
+
+describe('Git.stagedChanges', () => {
+	const moved = Array.from({ length: 30 }, (_, i) => `line ${i}\n`).join('')
+
+	// A repository whose conf/ has a change, a removed file and a renamed one, all staged, and a
+	// staged change outside of conf/
+	async function stagedRepo() {
+		const dir = await makeRepo([{
+			'conf/change.txt': 'old',
+			'conf/gone.txt': 'gone',
+			'conf/old place.txt': moved,
+			'other.txt': 'other',
+		}])
+		await fs.outputFile(path.join(dir, 'conf/change.txt'), 'new')
+		await fs.remove(path.join(dir, 'conf/gone.txt'))
+		await fs.move(
+			path.join(dir, 'conf/old place.txt'),
+			path.join(dir, 'conf/dir with space/ünï.txt'),
+		)
+		await fs.outputFile(path.join(dir, 'other.txt'), 'changed outside')
+		const git = await loadGit()
+		git.workingDir = dir
+		await git.add('conf')
+		await git.add('other.txt')
+		return git
+	}
+
+	const CONF_CHANGES = [
+		{ status: 'M', path: 'conf/change.txt' },
+		{ status: 'R100', from: 'conf/old place.txt', path: 'conf/dir with space/ünï.txt' },
+		{ status: 'D', path: 'conf/gone.txt' },
+	]
+
+	test('lists the changes staged below a path, with renames and verbatim paths', async () => {
+		const git = await stagedRepo()
+
+		assert.deepEqual(await git.stagedChanges('conf'), CONF_CHANGES)
+		assert.deepEqual(await git.stagedChanges('conf/change.txt'), [CONF_CHANGES[0]])
+		assert.deepEqual(await git.stagedChanges('unchanged'), [])
+	})
+
+	test('finds renames when the git config turns rename detection off', async () => {
+		const dir = await makeTmpDir()
+		const globalConfig = path.join(dir, 'gitconfig')
+		await fs.writeFile(globalConfig, '[diff]\n\trenames = false\n[color]\n\tui = always\n')
+		const saved = process.env.GIT_CONFIG_GLOBAL
+		process.env.GIT_CONFIG_GLOBAL = globalConfig
+		try {
+			const git = await stagedRepo()
+			assert.equal(gitIn(git.workingDir, 'config', 'diff.renames'), 'false')
+
+			assert.deepEqual(await git.stagedChanges('conf'), CONF_CHANGES)
+		} finally {
+			if (saved === undefined) delete process.env.GIT_CONFIG_GLOBAL
+			else process.env.GIT_CONFIG_GLOBAL = saved
+		}
 	})
 })
 

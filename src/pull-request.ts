@@ -12,6 +12,15 @@ export const PR_WARNING = '⚠️ This PR is being automatically resynced ⚠️
 export interface ChangedFiles {
 	header: string
 	files: string[]
+	// How many of its synced files did not change, which a line after the files says
+	unchanged?: number
+}
+
+// The line after the files of a section that has unchanged files
+function unchangedLine(unchanged: number | undefined): string[] {
+	if (!unchanged) return []
+
+	return [`...and ${unchanged} unchanged file${unchanged === 1 ? '' : 's'}`]
 }
 
 // What the PR body says besides the description and the changed files
@@ -117,14 +126,23 @@ export function formatChangedFiles(sections: ChangedFiles[], maxLength = Infinit
 	const start = '<details>\n<summary>Changed files</summary>\n<ul>\n'
 	const end = '\n</ul>\n</details>'
 	const full = start
-		+ sections.map(({ header, files }) => `<li>${header}\n\n${files.join('\n')}</li>`).join('')
+		+ sections
+			.map(({ header, files, unchanged }) =>
+				`<li>${header}\n\n${[...files, ...unchangedLine(unchanged)].join('\n')}</li>`
+			)
+			.join('')
 		+ end
 	if (full.length <= maxLength) return full
 
+	// Only the files count: the unchanged line of a section goes with it when it does not fit
 	const total = sections.reduce((count, { files }) => count + files.length, 0)
-	const pieces: { text: string; isFile?: boolean }[] = sections.flatMap(({ header, files }, i) => [
+	const pieces: { text: string; isFile?: boolean }[] = sections.flatMap((
+		{ header, files, unchanged },
+		i,
+	) => [
 		{ text: `${i === 0 ? '' : '</li>'}<li>${header}\n` },
 		...files.map((file) => ({ text: `\n${file}`, isFile: true })),
+		...unchangedLine(unchanged).map((line) => ({ text: `\n${line}` })),
 	])
 	// Room for the "...and N more" line and the closing tags
 	const reserve = `<li>...and ${total} more</li>`.length + end.length

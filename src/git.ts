@@ -8,10 +8,11 @@ import {
 	hasStatusChanges,
 	parseFileStatuses,
 	parseGitDiffOutput,
+	parseNameStatus,
 	parseTreeDiff,
 	parseTreeId,
 } from './git-output.ts'
-import type { TreeDiffEntry } from './git-output.ts'
+import type { NameStatusEntry, TreeDiffEntry } from './git-output.ts'
 import { createOctokit, GitHub } from './github.ts'
 import type { ExistingPr, PullRequest, RepoSession } from './github.ts'
 import { execFile, execFileBuffer } from './helpers.ts'
@@ -230,6 +231,16 @@ export default class Git implements RepoSession {
 		const statusOutput = await this.exec(['status', '--porcelain', '-z'], { trimResult: false })
 
 		return hasStatusChanges(statusOutput)
+	}
+
+	// The changes staged below dest, which the next commit makes. -M finds renames even when the
+	// runner's git config turns diff.renames off
+	async stagedChanges(dest: string): Promise<NameStatusEntry[]> {
+		const output = await this.exec(['diff', '--cached', '--name-status', '-z', '-M', '--', dest], {
+			trimResult: false,
+		})
+
+		return parseNameStatus(output)
 	}
 
 	async commit(msg?: string): Promise<string> {

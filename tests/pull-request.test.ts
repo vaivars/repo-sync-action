@@ -143,6 +143,36 @@ describe('formatChangedFiles', () => {
 		assert.match(text, /\.\.\.and [1-3] more<\/li>\n<\/ul>\n<\/details>$/)
 	})
 
+	test('ends a section with the number of its files that did not change', () => {
+		const section = (unchanged?: number) =>
+			formatChangedFiles([{ header: 'H', files: ['`a` - created'], unchanged }])
+		const list = (lines: string) =>
+			`<details>\n<summary>Changed files</summary>\n<ul>\n<li>H\n\n${lines}</li>\n</ul>\n</details>`
+
+		assert.equal(section(undefined), list('`a` - created'))
+		assert.equal(section(0), list('`a` - created'))
+		assert.equal(section(1), list('`a` - created\n...and 1 unchanged file'))
+		assert.equal(section(3), list('`a` - created\n...and 3 unchanged files'))
+	})
+
+	test('counts only changed files in the files it sums up', () => {
+		const withUnchanged = [
+			{ header: 'H1', files: ['`1` - created', '`2` - created'], unchanged: 5 },
+			{ header: 'H2', files: ['`3` - created'], unchanged: 2 },
+		]
+		const start =
+			'<details>\n<summary>Changed files</summary>\n<ul>\n<li>H1\n\n`1` - created\n`2` - created'
+		const end = '\n...and 1 more</li>\n</ul>\n</details>'
+		const fits = `${start}\n...and 5 unchanged files${end}`
+		// What it keeps free for the last line, "<li>...and 3 more</li>", is longer than the line
+		// "\n...and 1 more</li>" that ends this list
+		const room = '<li>'.length - '\n'.length
+
+		assert.equal(formatChangedFiles(withUnchanged, fits.length + room), fits)
+		// The unchanged line goes when it does not fit
+		assert.equal(formatChangedFiles(withUnchanged, fits.length + room - 1), `${start}${end}`)
+	})
+
 	test('sums up all files when not even the first header fits', () => {
 		assert.equal(
 			formatChangedFiles(sections, 10),

@@ -71,6 +71,36 @@ export function parseTreeDiff(output: string): TreeDiffEntry[] {
 	return diff
 }
 
+// One change of git diff --name-status -z
+export interface NameStatusEntry {
+	// The status letter, with the similarity score of a rename, like R100
+	status: string
+	path: string
+	// The path that a rename came from
+	from?: string
+}
+
+// The changes of git diff --name-status -z output, with their paths verbatim
+export function parseNameStatus(output: string): NameStatusEntry[] {
+	// Each change is "<status>" NUL "<path>" NUL. A rename, or a copy with -C, is
+	// "<status><score>" NUL "<from>" NUL "<path>" NUL
+	const fields = output.split('\0')
+	const changes: NameStatusEntry[] = []
+	let i = 0
+	while (i + 1 < fields.length && fields[i] !== '') {
+		const status = fields[i]
+		if (/^[RC]/.test(status)) {
+			changes.push({ status, from: fields[i + 1], path: fields[i + 2] })
+			i += 3
+		} else {
+			changes.push({ status, path: fields[i + 1] })
+			i += 2
+		}
+	}
+
+	return changes
+}
+
 // One entry of git status --porcelain -z: its two status letters and its path
 export interface StatusEntry {
 	status: string
