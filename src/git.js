@@ -36,6 +36,27 @@ import {
 // setPrWarning puts this on top of an existing PR body while it is being resynced
 const PR_WARNING = '⚠️ This PR is being automatically resynced ⚠️'
 
+// The environment that authenticates git's HTTPS requests. git reads http.extraHeader from it
+// (git 2.31 or newer), so the token is neither in argv nor in a remote URL, which git would store
+// in the clone's .git/config. Unlike a GIT_ASKPASS helper, it needs no script on disk, and the
+// token never goes through git's credential helpers, which could store it
+function authEnv() {
+	// The user:password pairs of the https://<credentials>@host URLs used before. A bare token was
+	// the user name with an empty password
+	const credentials = `${IS_INSTALLATION_TOKEN ? 'x-access-token:' : ''}${
+		IS_FINE_GRAINED ? 'oauth:' : ''
+	}${GITHUB_TOKEN}`
+	const basic = Buffer.from(credentials.includes(':') ? credentials : `${credentials}:`)
+		.toString('base64')
+	core.setSecret(basic)
+
+	return {
+		GIT_CONFIG_COUNT: '1',
+		GIT_CONFIG_KEY_0: 'http.extraHeader',
+		GIT_CONFIG_VALUE_0: `Authorization: Basic ${basic}`,
+	}
+}
+
 export default class Git {
 	constructor() {
 		const octokit = github.getOctokit(
@@ -62,12 +83,19 @@ export default class Git {
 
 		// We only need the rest client
 		this.github = octokit.rest
+
+		this.authEnv = authEnv()
 	}
 
 	// Runs git in the clone. Values from sync.yml and the inputs are passed as separate arguments,
 	// never through a shell
 	exec(args, options) {
 		return execFile('git', args, this.workingDir, options)
+	}
+
+	// Runs a git command that talks to the server, with the credentials in its environment
+	execRemote(args) {
+		return this.exec(args, { env: this.authEnv })
 	}
 
 	// Fails the repository unless name is a branch name that git takes as it is. git would read one
@@ -95,10 +123,8 @@ export default class Git {
 		// Set values to current repo
 		this.repo = repo
 		this.workingDir = path.join(TMP_DIR, repo.uniqueName)
-		const credentials = `${IS_INSTALLATION_TOKEN ? 'x-access-token:' : ''}${
-			IS_FINE_GRAINED ? 'oauth:' : ''
-		}${GITHUB_TOKEN}`
-		this.gitUrl = `https://${credentials}@${repo.fullName}.git`
+		// No credentials in it, see authEnv
+		this.gitUrl = `https://${repo.fullName}.git`
 
 		if (repo.branch !== 'default') {
 			await this.checkBranchName(repo.branch, 'branch')
@@ -110,7 +136,8 @@ export default class Git {
 		await this.getLastCommitSha()
 
 		if (FORK) {
-			const forkUrl = `https://${credentials}@${repo.host}/${FORK}/${repo.name}.git`
+			// On the repo's host, so the push to it gets the same credentials
+			const forkUrl = `https://${repo.host}/${FORK}/${repo.name}.git`
 			await this.createFork()
 			await this.createRemote(forkUrl)
 		}
@@ -135,15 +162,12 @@ export default class Git {
 
 		const branch = this.repo.branch !== 'default' ? ['--branch', this.repo.branch] : []
 		// Runs where the action runs, since the clone does not exist yet
-		return execFile('git', [
-			'clone',
-			'--depth',
-			'1',
-			...branch,
-			'--',
-			this.gitUrl,
-			this.workingDir,
-		])
+		return execFile(
+			'git',
+			['clone', '--depth', '1', ...branch, '--', this.gitUrl, this.workingDir],
+			undefined,
+			{ env: this.authEnv },
+		)
 	}
 
 	async setIdentity() {
@@ -418,13 +442,13 @@ export default class Git {
 
 	async push() {
 		if (FORK) {
-			return this.exec(['push', '-u', 'fork', this.prBranch, '--force'])
+			return this.execRemote(['push', '-u', 'fork', this.prBranch, '--force'])
 		}
 		if (IS_INSTALLATION_TOKEN) {
 			return await this.createGithubVerifiedCommits()
 		}
 		// With SKIP_PR the commits go straight onto the base branch, which must not be force pushed
-		return this.exec(['push', this.gitUrl, ...(SKIP_PR === false ? ['--force'] : [])])
+		return this.execRemote(['push', this.gitUrl, ...(SKIP_PR === false ? ['--force'] : [])])
 	}
 
 	async findExistingPr() {
