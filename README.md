@@ -271,11 +271,12 @@ are welcome.
 The tooling is managed with [mise](https://mise.jdx.dev):
 
 ```sh
-mise run install  # install dependencies
-mise run lint     # eslint
-mise run format   # dprint
-mise run test     # build, then run the unit and local integration tests
-mise run build    # bundle src/ into dist/
+mise run install       # install dependencies
+mise run lint          # eslint
+mise run lint:actions  # actionlint and zizmor on the workflows
+mise run format        # dprint
+mise run test          # build, then run the unit and local integration tests
+mise run build         # bundle src/ into dist/
 ```
 
 The action runs the bundled `dist/index.js`. Rebuild and commit `dist/` together with every change

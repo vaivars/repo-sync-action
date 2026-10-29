@@ -10,7 +10,7 @@ group:
   - files:
       - source: .github/workflows/build.yml
     repos: main_repos
-  
+
   - files:
       - source: README.md
     repos: |
