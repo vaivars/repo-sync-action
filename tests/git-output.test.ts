@@ -3,9 +3,9 @@ import { describe, test } from 'node:test'
 
 import {
 	hasStatusChanges,
-	parseFileStatuses,
 	parseGitDiffOutput,
 	parseNameStatus,
+	parseStatus,
 	parseTreeDiff,
 	parseTreeId,
 } from '../src/git-output.ts'
@@ -115,17 +115,14 @@ describe('git status --porcelain -z', () => {
 	const output = ' M a.txt\0?? new file.txt\0D  ünï\ncödé.txt\0R  renamed.txt\0old name.txt\0'
 		+ 'A   leading space.txt\0'
 
-	test('maps each path to its status letters', () => {
-		assert.deepEqual(
-			parseFileStatuses(output),
-			new Map([
-				['a.txt', ' M'],
-				['new file.txt', '??'],
-				['ünï\ncödé.txt', 'D '],
-				['renamed.txt', 'R '],
-				[' leading space.txt', 'A '],
-			]),
-		)
+	test('reads each path with its status letters', () => {
+		assert.deepEqual(parseStatus(output), [
+			{ status: ' M', path: 'a.txt' },
+			{ status: '??', path: 'new file.txt' },
+			{ status: 'D ', path: 'ünï\ncödé.txt' },
+			{ status: 'R ', path: 'renamed.txt' },
+			{ status: 'A ', path: ' leading space.txt' },
+		])
 	})
 
 	test('has changes when it lists any file', () => {

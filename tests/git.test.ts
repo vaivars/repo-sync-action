@@ -450,30 +450,17 @@ describe('Git.uploadGitHubBlob', () => {
 	}
 })
 
-describe('Git.getFileStatuses', () => {
-	test('gives files with spaces and non-ASCII characters in their path their status', async () => {
-		const dir = await makeRepo([{
-			'changed file.txt': 'old',
-			'removed ünï.txt': 'gone',
-			'old name.txt': 'renamed content\n'.repeat(20),
-		}])
-		await fs.outputFile(path.join(dir, 'changed file.txt'), 'new')
-		await fs.remove(path.join(dir, 'removed ünï.txt'))
-		await fs.move(path.join(dir, 'old name.txt'), path.join(dir, 'dir with space/new name.txt'))
-		await fs.outputFile(path.join(dir, 'ädded "quoted".txt'), 'added')
-		gitIn(dir, 'add', '-A')
+describe('Git.hasChanges', () => {
+	test('sees changes to paths with spaces and non-ASCII characters', async () => {
+		const dir = await makeRepo([{ 'changed file.txt': 'old', 'ünï.txt': 'same' }])
 		const git = await loadGit()
 		git.workingDir = dir
 
-		assert.deepEqual(
-			await git.getFileStatuses(),
-			new Map([
-				['changed file.txt', 'M '],
-				['dir with space/new name.txt', 'R '],
-				['removed ünï.txt', 'D '],
-				['ädded "quoted".txt', 'A '],
-			]),
-		)
+		assert.equal(await git.hasChanges(), false)
+		await fs.outputFile(path.join(dir, 'changed file.txt'), 'new')
+		assert.equal(await git.hasChanges(), true)
+		await fs.remove(path.join(dir, 'ünï.txt'))
+		gitIn(dir, 'add', '-A')
 		assert.equal(await git.hasChanges(), true)
 	})
 })

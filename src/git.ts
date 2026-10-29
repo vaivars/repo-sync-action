@@ -6,7 +6,6 @@ import config from './config.ts'
 import type { Repo } from './config.ts'
 import {
 	hasStatusChanges,
-	parseFileStatuses,
 	parseGitDiffOutput,
 	parseNameStatus,
 	parseTreeDiff,
@@ -222,11 +221,6 @@ export default class Git implements RepoSession {
 	}
 
 	// The output is not trimmed, which would cut the spaces of a status or a path
-	async getFileStatuses(): Promise<Map<string, string>> {
-		const statusOutput = await this.exec(['status', '--porcelain', '-z'], { trimResult: false })
-		return parseFileStatuses(statusOutput)
-	}
-
 	async hasChanges(): Promise<boolean> {
 		const statusOutput = await this.exec(['status', '--porcelain', '-z'], { trimResult: false })
 
