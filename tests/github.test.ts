@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
 import type { TreeDiffEntry } from '../src/git-output.ts'
-import type { GitHubOptions, RepoSession, RestApi } from '../src/github.ts'
+import type { GitHubOptions, GraphQlApi, RepoSession, RestApi } from '../src/github.ts'
 import { PR_WARNING } from '../src/pull-request.ts'
 import type { FakeApi } from './support.ts'
 import { silentCore } from './support.ts'
@@ -44,7 +44,8 @@ function session(overrides: Partial<RepoSession> = {}): RepoSession {
 	}
 }
 
-// A GitHub whose fake API records each call as [scope.method, params]
+// A GitHub whose fake API records each call as [scope.method, params], and each GraphQL request as
+// ['graphql', { query, ...variables }]
 function recordingGitHub(
 	repoSession: RepoSession,
 	options: Partial<GitHubOptions> = {},
@@ -62,6 +63,7 @@ function recordingGitHub(
 			'pulls.list',
 			'pulls.create',
 			'pulls.update',
+			'pulls.merge',
 			'issues.addLabels',
 		]
 	) {
@@ -72,7 +74,16 @@ function recordingGitHub(
 			return responses[name]?.(params) ?? { data: {} }
 		}
 	}
-	const github = new GitHub(api as unknown as RestApi, repoSession, { ...OPTIONS, ...options })
+	const graphql = async (query: string, variables: Record<string, unknown>) => {
+		const params = { query, ...variables }
+		calls.push(['graphql', params])
+		return responses.graphql?.(params) ?? {}
+	}
+	const github = new GitHub(
+		{ rest: api as unknown as RestApi, graphql: graphql as unknown as GraphQlApi },
+		repoSession,
+		{ ...OPTIONS, ...options },
+	)
 	return { github, calls }
 }
 
@@ -122,6 +133,59 @@ describe('GitHub.createOrUpdatePr', () => {
 		assert.equal(update.title, 'Title')
 		assert.equal(update.pull_number, 5)
 		assert.equal(update.body, create.body)
+	})
+})
+
+describe('GitHub.enablePrAutoMerge', () => {
+	const PULL_REQUEST = { number: 5, body: null, html_url: 'url', node_id: 'PR_node' }
+	// How Octokit's GraphqlResponseError words GitHub's errors
+	const graphqlError = (message: string) => () => {
+		throw new Error(`Request failed due to following response errors:\n - ${message}`)
+	}
+
+	test('enables auto-merge by the node ID, with the method in the case GraphQL takes', async () => {
+		const { github, calls } = recordingGitHub(session())
+
+		assert.equal(await github.enablePrAutoMerge(PULL_REQUEST, 'squash'), 'enabled')
+
+		assert.equal(calls.length, 1)
+		const [[name, { query, ...variables }]] = calls
+		assert.equal(name, 'graphql')
+		assert.match(
+			query as string,
+			/enablePullRequestAutoMerge\(input: \{ pullRequestId: \$pullRequestId, mergeMethod: \$mergeMethod \}\)/,
+		)
+		assert.deepEqual(variables, { pullRequestId: 'PR_node', mergeMethod: 'SQUASH' })
+	})
+
+	for (const status of ['clean', 'unstable']) {
+		test(`merges a PR in ${status} status right away`, async () => {
+			const { github, calls } = recordingGitHub(session(), {}, {
+				graphql: graphqlError(`Pull request is in ${status} status`),
+			})
+
+			assert.equal(await github.enablePrAutoMerge(PULL_REQUEST, 'rebase'), 'merged')
+
+			assert.deepEqual(calls.map(([name]) => name), ['graphql', 'pulls.merge'])
+			assert.deepEqual(calls[1][1], {
+				owner: 'owner',
+				repo: 'repo',
+				pull_number: 5,
+				merge_method: 'rebase',
+			})
+		})
+	}
+
+	test('fails on other errors without merging', async () => {
+		const { github, calls } = recordingGitHub(session(), {}, {
+			graphql: graphqlError('Auto merge is not allowed for this repository'),
+		})
+
+		await assert.rejects(
+			github.enablePrAutoMerge(PULL_REQUEST, 'merge'),
+			/Auto merge is not allowed for this repository/,
+		)
+		assert.deepEqual(calls.map(([name]) => name), ['graphql'])
 	})
 })
 

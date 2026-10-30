@@ -36,6 +36,8 @@ const {
 	FORK,
 	REVIEWERS,
 	TEAM_REVIEWERS,
+	PR_AUTOMERGE,
+	PR_AUTOMERGE_METHOD,
 } = config
 
 // A commit the sync made: one per file entry with COMMIT_EACH_FILE, and one with the files left over
@@ -176,6 +178,16 @@ async function processRepository(item: SyncTarget, git: Git, prUrls: string[]): 
 					`Adding team reviewer(s) "${TEAM_REVIEWERS.join(', ')}" to PR`,
 				)
 				await git.addPrTeamReviewers(TEAM_REVIEWERS)
+			}
+
+			if (PR_AUTOMERGE && !FORK) {
+				core.info(`Enabling auto-merge (${PR_AUTOMERGE_METHOD}) on PR`)
+				const automerge = await git.enablePrAutoMerge(pullRequest, PR_AUTOMERGE_METHOD)
+				if (automerge === 'merged') {
+					core.notice(
+						`Pull Request #${pullRequest.number} had no required checks or reviews to wait for and was merged`,
+					)
+				}
 			}
 		}
 

@@ -42,6 +42,16 @@ inputs:
     description: |
       Teams to request a review from, one per line
     required: false
+  PR_AUTOMERGE:
+    description: |
+      Enable auto-merge on the pull request, so GitHub merges it once its required checks and reviews pass. A pull request with none to wait for is merged right away. Not applied with FORK
+    required: false
+    default: 'false'
+  PR_AUTOMERGE_METHOD:
+    description: |
+      How PR_AUTOMERGE merges the pull request: merge, squash or rebase
+    required: false
+    default: 'merge'
   COMMIT_PREFIX:
     description: |
       Prefix for commit messages and the pull request title

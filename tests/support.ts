@@ -216,7 +216,10 @@ export async function loadGit(
 	})
 	const github = await esmock.strict<typeof import('../src/github.ts')>('../src/github.ts', {
 		'@actions/core': core,
-		'@actions/github': { getOctokit: () => ({ rest: octokit }), context: {} },
+		'@actions/github': {
+			getOctokit: () => ({ rest: octokit, graphql: async () => ({}) }),
+			context: {},
+		},
 	})
 	const mocks: Record<string, unknown> = {
 		'@actions/core': core,

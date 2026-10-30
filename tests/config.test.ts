@@ -16,6 +16,29 @@ describe('config', () => {
 		})
 	}
 
+	for (const [value, expected] of [[undefined, false], ['false', false], ['true', true]] as const) {
+		test(`parses PR_AUTOMERGE ${value} as ${expected}`, async () => {
+			const { context } = await loadConfig('', { PR_AUTOMERGE: value })
+
+			assert.equal(context.PR_AUTOMERGE, expected)
+		})
+	}
+
+	test('accepts each merge method in PR_AUTOMERGE_METHOD', async () => {
+		for (const method of ['merge', 'squash', 'rebase']) {
+			const { context } = await loadConfig('', { PR_AUTOMERGE_METHOD: method })
+
+			assert.equal(context.PR_AUTOMERGE_METHOD, method)
+		}
+	})
+
+	test('rejects a PR_AUTOMERGE_METHOD that is not a merge method', async () => {
+		assert.deepEqual(await configFailure({ PR_AUTOMERGE_METHOD: 'fast-forward' }), {
+			failures: ['PR_AUTOMERGE_METHOD must be one of merge, squash, rebase, not "fast-forward"'],
+			code: 1,
+		})
+	})
+
 	test('rejects FORK together with SKIP_PR', async () => {
 		assert.deepEqual(await configFailure({ FORK: 'forker', SKIP_PR: 'true' }), {
 			failures: [

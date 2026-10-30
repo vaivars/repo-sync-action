@@ -2,15 +2,17 @@ import * as core from '@actions/core'
 import * as github from '@actions/github'
 import { throttling } from '@octokit/plugin-throttling'
 
-import type { Repo } from './config.ts'
+import type { MergeMethod, Repo } from './config.ts'
 import { parseGitDiffOutput } from './git-output.ts'
 import type { TreeDiffEntry } from './git-output.ts'
 import { prBody, prHead, withoutPrWarning, withPrWarning } from './pull-request.ts'
 import type { ChangedFiles, PrBodyOptions } from './pull-request.ts'
 
 export type Octokit = ReturnType<typeof github.getOctokit>
-// The REST endpoint methods, the only part of the client the action uses
+// The REST endpoint methods, which the action uses for everything but auto-merge
 export type RestApi = Octokit['rest']
+// The GraphQL client, for auto-merge, which has no REST endpoint
+export type GraphQlApi = Octokit['graphql']
 type TreeEntry = NonNullable<Parameters<RestApi['git']['createTree']>[0]>['tree'][number]
 
 // The parts of an open pull request that the action reads
@@ -22,6 +24,8 @@ export interface ExistingPr {
 // A pull request that createOrUpdatePr created or updated
 export interface PullRequest extends ExistingPr {
 	html_url: string
+	// The ID that GraphQL takes the PR by
+	node_id: string
 }
 
 // What GitHub reads from, and writes back to, the Git session of the repository being synced
@@ -72,6 +76,21 @@ export function isReferenceExistsError(error: unknown): boolean {
 	return requestError.status === 422 && requestError.message.startsWith('Reference already exists')
 }
 
+// GitHub's answer when auto-merge is enabled on a PR that nothing holds back, because the base
+// branch requires no checks or reviews that are still pending. Unstable means that only checks
+// that are not required are pending or failed
+export function isAlreadyMergeableError(error: unknown): boolean {
+	return /Pull request is in (clean|unstable) status/.test((error as Error).message)
+}
+
+const ENABLE_AUTO_MERGE = `
+	mutation($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!) {
+		enablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId, mergeMethod: $mergeMethod }) {
+			clientMutationId
+		}
+	}
+`
+
 // A client for the GitHub API that waits out rate limits
 export function createOctokit(token: string): Octokit {
 	return github.getOctokit(
@@ -118,13 +137,19 @@ export function treeEntries(treeDiff: TreeDiffEntry[]): TreeEntry[] {
 // installation token makes through the API, and the event that triggered the run
 export class GitHub {
 	api: RestApi
+	graphql: GraphQlApi
 	session: RepoSession
 	options: GitHubOptions
 	// The changes of the pushed commit by path, once getChangesFromLastCommit fetched them
 	lastCommitChanges: Record<string, string> | undefined
 
-	constructor(api: RestApi, session: RepoSession, options: GitHubOptions) {
-		this.api = api
+	constructor(
+		octokit: { rest: RestApi; graphql: GraphQlApi },
+		session: RepoSession,
+		options: GitHubOptions,
+	) {
+		this.api = octokit.rest
+		this.graphql = octokit.graphql
 		this.session = session
 		this.options = options
 	}
@@ -394,5 +419,30 @@ export class GitHub {
 			pull_number: this.pr.number,
 			team_reviewers: reviewers,
 		})
+	}
+
+	// Turns on auto-merge, so that GitHub merges the PR once its required checks and reviews pass.
+	// A PR that nothing holds back is merged right away instead, which GitHub's auto-merge refuses
+	async enablePrAutoMerge(
+		pullRequest: PullRequest,
+		mergeMethod: MergeMethod,
+	): Promise<'enabled' | 'merged'> {
+		try {
+			await this.graphql(ENABLE_AUTO_MERGE, {
+				pullRequestId: pullRequest.node_id,
+				mergeMethod: mergeMethod.toUpperCase(),
+			})
+			return 'enabled'
+		} catch (error) {
+			if (!isAlreadyMergeableError(error)) throw error
+		}
+
+		core.debug(`PR #${pullRequest.number} can be merged already, merging it`)
+		await this.api.pulls.merge({
+			...this.target,
+			pull_number: pullRequest.number,
+			merge_method: mergeMethod,
+		})
+		return 'merged'
 	}
 }
