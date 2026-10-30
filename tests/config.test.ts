@@ -24,11 +24,13 @@ describe('config', () => {
 		})
 	}
 
-	test('accepts each merge method in PR_AUTOMERGE_METHOD', async () => {
-		for (const method of ['merge', 'squash', 'rebase']) {
+	test('accepts each merge method in PR_AUTOMERGE_METHOD, in any case', async () => {
+		for (
+			const [method, expected] of [['merge', 'merge'], ['squash', 'squash'], ['Rebase', 'rebase']]
+		) {
 			const { context } = await loadConfig('', { PR_AUTOMERGE_METHOD: method })
 
-			assert.equal(context.PR_AUTOMERGE_METHOD, method)
+			assert.equal(context.PR_AUTOMERGE_METHOD, expected)
 		}
 	})
 

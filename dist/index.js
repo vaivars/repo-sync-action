@@ -11985,7 +11985,7 @@ module.exports = stream
 
 /***/ }),
 
-/***/ 1882:
+/***/ 9501:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 
@@ -12108,7 +12108,7 @@ module.exports = upgrade
 module.exports.request = __nccwpck_require__(4043)
 module.exports.stream = __nccwpck_require__(3560)
 module.exports.pipeline = __nccwpck_require__(6862)
-module.exports.upgrade = __nccwpck_require__(1882)
+module.exports.upgrade = __nccwpck_require__(9501)
 module.exports.connect = __nccwpck_require__(2279)
 
 
@@ -45483,7 +45483,7 @@ try {
         REVIEWERS: { type: 'array' },
         TEAM_REVIEWERS: { type: 'array' },
         PR_AUTOMERGE: { type: 'boolean', default: false },
-        PR_AUTOMERGE_METHOD: { default: 'merge' },
+        PR_AUTOMERGE_METHOD: { default: 'merge', modifier: (method) => String(method).toLowerCase() },
         TMP_DIR: { default: tmpDirIn(process.env.RUNNER_TEMP || external_os_namespaceObject.tmpdir()) },
         DRY_RUN: { type: 'boolean', default: false },
         SKIP_CLEANUP: { type: 'boolean', default: false },
@@ -51014,6 +51014,8 @@ throttling.VERSION = plugin_throttling_dist_bundle_VERSION;
 throttling.triggersNotification = triggersNotification;
 
 
+;// CONCATENATED MODULE: external "timers/promises"
+const promises_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("timers/promises");
 ;// CONCATENATED MODULE: ./src/dedent.ts
 // From https://github.com/MartinKolarik/dedent-js/blob/master/src/index.ts - MIT © 2015 Martin Kolárik
 function dedent(templateStrings, ...values) {
@@ -51150,20 +51152,41 @@ function formatChangedFiles(sections, maxLength = Infinity) {
 
 
 
+
 // GitHub's answer when createRef targets a branch that already exists. Octokit
 // appends the docs URL to the message, so match its start, not all of it.
 function isReferenceExistsError(error) {
     const requestError = error;
     return requestError.status === 422 && requestError.message.startsWith('Reference already exists');
 }
-// GitHub's answer when auto-merge is enabled on a PR that nothing holds back, because the base
-// branch requires no checks or reviews that are still pending. Unstable means that only checks
-// that are not required are pending or failed
+// The merge states of a PR that nothing holds back, because the base branch requires no checks or
+// reviews that are still pending. GitHub's auto-merge refuses these, and they can be merged right
+// away. Unstable means that only checks that are not required are pending or failed, and has hooks
+// that GitHub Enterprise Server runs pre-receive hooks
+const MERGEABLE_NOW = ['CLEAN', 'HAS_HOOKS', 'UNSTABLE'];
+// GitHub's answer when auto-merge is enabled on a PR in one of the MERGEABLE_NOW states
 function isAlreadyMergeableError(error) {
-    return /Pull request is in (clean|unstable) status/.test(error.message);
+    return /Pull request is in (clean|has_hooks|unstable) status/.test(error.message);
 }
+// How often enablePrAutoMerge reads the merge state while GitHub is still working it out, which it
+// does for a moment after each push
+const MERGE_STATE_READS = 5;
+const MERGE_STATE = `
+	query PullRequestMergeState($pullRequestId: ID!) {
+		node(id: $pullRequestId) {
+			... on PullRequest {
+				mergeStateStatus
+				isMergeQueueEnabled
+				headRefOid
+				autoMergeRequest {
+					mergeMethod
+				}
+			}
+		}
+	}
+`;
 const ENABLE_AUTO_MERGE = `
-	mutation($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!) {
+	mutation EnablePullRequestAutoMerge($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!) {
 		enablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId, mergeMethod: $mergeMethod }) {
 			clientMutationId
 		}
@@ -51209,6 +51232,8 @@ class github_GitHub {
     options;
     // The changes of the pushed commit by path, once getChangesFromLastCommit fetched them
     lastCommitChanges;
+    // The milliseconds between two reads of a merge state that GitHub is still working out
+    mergeStateDelay = 2000;
     constructor(octokit, session, options) {
         this.api = octokit.rest;
         this.graphql = octokit.graphql;
@@ -51437,25 +51462,48 @@ class github_GitHub {
             team_reviewers: reviewers,
         });
     }
+    // The PR's merge state, read again while GitHub is still working it out. After the last read it
+    // can still be UNKNOWN
+    async getMergeState(pullRequestId) {
+        for (let read = 1;; read++) {
+            const { node } = await this.graphql(MERGE_STATE, { pullRequestId });
+            if (node.mergeStateStatus !== 'UNKNOWN' || read === MERGE_STATE_READS)
+                return node;
+            core_debug(`The merge state is not known yet, reading it again in ${this.mergeStateDelay}ms`);
+            await (0,promises_namespaceObject.setTimeout)(this.mergeStateDelay);
+        }
+    }
     // Turns on auto-merge, so that GitHub merges the PR once its required checks and reviews pass.
     // A PR that nothing holds back is merged right away instead, which GitHub's auto-merge refuses
     async enablePrAutoMerge(pullRequest, mergeMethod) {
-        try {
-            await this.graphql(ENABLE_AUTO_MERGE, {
-                pullRequestId: pullRequest.node_id,
-                mergeMethod: mergeMethod.toUpperCase(),
-            });
+        const state = await this.getMergeState(pullRequest.node_id);
+        const method = mergeMethod.toUpperCase();
+        if (state.autoMergeRequest?.mergeMethod === method) {
+            core_debug(`Auto-merge is already enabled on PR #${pullRequest.number}`);
             return 'enabled';
         }
-        catch (error) {
-            if (!isAlreadyMergeableError(error))
-                throw error;
+        // A merge queue takes every PR through auto-merge, and refuses to merge one directly
+        if (state.isMergeQueueEnabled || !MERGEABLE_NOW.includes(state.mergeStateStatus)) {
+            try {
+                await this.graphql(ENABLE_AUTO_MERGE, {
+                    pullRequestId: pullRequest.node_id,
+                    mergeMethod: method,
+                });
+                return 'enabled';
+            }
+            catch (error) {
+                // The checks or reviews it was waiting for passed after the state was read
+                if (!isAlreadyMergeableError(error))
+                    throw error;
+            }
         }
         core_debug(`PR #${pullRequest.number} can be merged already, merging it`);
         await this.api.pulls.merge({
             ...this.target,
             pull_number: pullRequest.number,
             merge_method: mergeMethod,
+            // Fails instead of merging a commit pushed after the state was read
+            sha: state.headRefOid,
         });
         return 'merged';
     }

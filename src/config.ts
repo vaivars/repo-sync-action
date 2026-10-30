@@ -143,7 +143,7 @@ try {
 		REVIEWERS: { type: 'array' },
 		TEAM_REVIEWERS: { type: 'array' },
 		PR_AUTOMERGE: { type: 'boolean', default: false },
-		PR_AUTOMERGE_METHOD: { default: 'merge' },
+		PR_AUTOMERGE_METHOD: { default: 'merge', modifier: (method) => String(method).toLowerCase() },
 		TMP_DIR: { default: tmpDirIn(process.env.RUNNER_TEMP || os.tmpdir()) },
 		DRY_RUN: { type: 'boolean', default: false },
 		SKIP_CLEANUP: { type: 'boolean', default: false },

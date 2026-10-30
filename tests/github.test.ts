@@ -45,7 +45,7 @@ function session(overrides: Partial<RepoSession> = {}): RepoSession {
 }
 
 // A GitHub whose fake API records each call as [scope.method, params], and each GraphQL request as
-// ['graphql', { query, ...variables }]
+// [graphql.OperationName, variables]. It reads merge states again without waiting
 function recordingGitHub(
 	repoSession: RepoSession,
 	options: Partial<GitHubOptions> = {},
@@ -75,15 +75,16 @@ function recordingGitHub(
 		}
 	}
 	const graphql = async (query: string, variables: Record<string, unknown>) => {
-		const params = { query, ...variables }
-		calls.push(['graphql', params])
-		return responses.graphql?.(params) ?? {}
+		const name = `graphql.${query.match(/(?:query|mutation) (\w+)/)![1]}`
+		calls.push([name, variables])
+		return responses[name]?.(variables) ?? {}
 	}
 	const github = new GitHub(
 		{ rest: api as unknown as RestApi, graphql: graphql as unknown as GraphQlApi },
 		repoSession,
 		{ ...OPTIONS, ...options },
 	)
+	github.mergeStateDelay = 0
 	return { github, calls }
 }
 
@@ -138,54 +139,152 @@ describe('GitHub.createOrUpdatePr', () => {
 
 describe('GitHub.enablePrAutoMerge', () => {
 	const PULL_REQUEST = { number: 5, body: null, html_url: 'url', node_id: 'PR_node' }
-	// How Octokit's GraphqlResponseError words GitHub's errors
+	const READ_STATE = ['graphql.PullRequestMergeState', { pullRequestId: 'PR_node' }]
+	// What the merge state query answers: a PR that waits for its checks, unless overridden
+	const mergeState = (state: Record<string, unknown> = {}) => () => ({
+		node: {
+			mergeStateStatus: 'BLOCKED',
+			isMergeQueueEnabled: false,
+			headRefOid: 'head',
+			autoMergeRequest: null,
+			...state,
+		},
+	})
+	// The merge state query's answers, one per read, the last one repeated
+	const mergeStates = (...statuses: string[]) => {
+		let read = 0
+		return () => mergeState({ mergeStateStatus: statuses[Math.min(read++, statuses.length - 1)] })()
+	}
+	// How Octokit's GraphqlResponseError words GitHub's errors, which repeat the "Pull request"
 	const graphqlError = (message: string) => () => {
 		throw new Error(`Request failed due to following response errors:\n - ${message}`)
 	}
+	const MERGE = {
+		owner: 'owner',
+		repo: 'repo',
+		pull_number: 5,
+		merge_method: 'rebase',
+		sha: 'head',
+	}
 
-	test('enables auto-merge by the node ID, with the method in the case GraphQL takes', async () => {
-		const { github, calls } = recordingGitHub(session())
+	test('enables auto-merge on a PR that waits, by its node ID and the method in upper case', async () => {
+		const { github, calls } = recordingGitHub(session(), {}, {
+			'graphql.PullRequestMergeState': mergeState(),
+		})
 
 		assert.equal(await github.enablePrAutoMerge(PULL_REQUEST, 'squash'), 'enabled')
 
-		assert.equal(calls.length, 1)
-		const [[name, { query, ...variables }]] = calls
-		assert.equal(name, 'graphql')
-		assert.match(
-			query as string,
-			/enablePullRequestAutoMerge\(input: \{ pullRequestId: \$pullRequestId, mergeMethod: \$mergeMethod \}\)/,
-		)
-		assert.deepEqual(variables, { pullRequestId: 'PR_node', mergeMethod: 'SQUASH' })
+		assert.deepEqual(calls, [
+			READ_STATE,
+			['graphql.EnablePullRequestAutoMerge', { pullRequestId: 'PR_node', mergeMethod: 'SQUASH' }],
+		])
 	})
 
-	for (const status of ['clean', 'unstable']) {
-		test(`merges a PR in ${status} status right away`, async () => {
+	for (const status of ['CLEAN', 'HAS_HOOKS', 'UNSTABLE']) {
+		test(`merges a PR in ${status} state right away, pinned to the commit it read`, async () => {
 			const { github, calls } = recordingGitHub(session(), {}, {
-				graphql: graphqlError(`Pull request is in ${status} status`),
+				'graphql.PullRequestMergeState': mergeState({ mergeStateStatus: status }),
 			})
 
 			assert.equal(await github.enablePrAutoMerge(PULL_REQUEST, 'rebase'), 'merged')
 
-			assert.deepEqual(calls.map(([name]) => name), ['graphql', 'pulls.merge'])
-			assert.deepEqual(calls[1][1], {
-				owner: 'owner',
-				repo: 'repo',
-				pull_number: 5,
-				merge_method: 'rebase',
+			assert.deepEqual(calls, [READ_STATE, ['pulls.merge', MERGE]])
+		})
+	}
+
+	test('reads the merge state again while GitHub works it out', async () => {
+		const { github, calls } = recordingGitHub(session(), {}, {
+			'graphql.PullRequestMergeState': mergeStates('UNKNOWN', 'UNKNOWN', 'CLEAN'),
+		})
+
+		assert.equal(await github.enablePrAutoMerge(PULL_REQUEST, 'rebase'), 'merged')
+
+		assert.deepEqual(calls, [READ_STATE, READ_STATE, READ_STATE, ['pulls.merge', MERGE]])
+	})
+
+	test('enables auto-merge when the merge state stays unknown', async () => {
+		const { github, calls } = recordingGitHub(session(), {}, {
+			'graphql.PullRequestMergeState': mergeStates('UNKNOWN'),
+		})
+
+		assert.equal(await github.enablePrAutoMerge(PULL_REQUEST, 'rebase'), 'enabled')
+
+		assert.deepEqual(calls.map(([name]) => name), [
+			...Array<string>(5).fill('graphql.PullRequestMergeState'),
+			'graphql.EnablePullRequestAutoMerge',
+		])
+	})
+
+	test('leaves auto-merge that is enabled with the method, and changes another method', async () => {
+		const same = recordingGitHub(session(), {}, {
+			'graphql.PullRequestMergeState': mergeState({ autoMergeRequest: { mergeMethod: 'SQUASH' } }),
+		})
+		const other = recordingGitHub(session(), {}, {
+			'graphql.PullRequestMergeState': mergeState({ autoMergeRequest: { mergeMethod: 'MERGE' } }),
+		})
+
+		assert.equal(await same.github.enablePrAutoMerge(PULL_REQUEST, 'squash'), 'enabled')
+		assert.equal(await other.github.enablePrAutoMerge(PULL_REQUEST, 'squash'), 'enabled')
+
+		assert.deepEqual(same.calls, [READ_STATE])
+		assert.deepEqual(other.calls.map(([name]) => name), [
+			'graphql.PullRequestMergeState',
+			'graphql.EnablePullRequestAutoMerge',
+		])
+	})
+
+	test('enables auto-merge with a merge queue, also for a PR that could be merged', async () => {
+		const { github, calls } = recordingGitHub(session(), {}, {
+			'graphql.PullRequestMergeState': mergeState({
+				mergeStateStatus: 'CLEAN',
+				isMergeQueueEnabled: true,
+			}),
+		})
+
+		assert.equal(await github.enablePrAutoMerge(PULL_REQUEST, 'squash'), 'enabled')
+
+		assert.deepEqual(calls.map(([name]) => name), [
+			'graphql.PullRequestMergeState',
+			'graphql.EnablePullRequestAutoMerge',
+		])
+	})
+
+	for (const status of ['clean', 'has_hooks', 'unstable']) {
+		test(`merges right away when auto-merge is refused for ${status} status`, async () => {
+			const { github, calls } = recordingGitHub(session(), {}, {
+				'graphql.PullRequestMergeState': mergeState(),
+				'graphql.EnablePullRequestAutoMerge': graphqlError(
+					`Pull request Pull request is in ${status} status`,
+				),
 			})
+
+			assert.equal(await github.enablePrAutoMerge(PULL_REQUEST, 'rebase'), 'merged')
+
+			assert.deepEqual(calls.map(([name]) => name), [
+				'graphql.PullRequestMergeState',
+				'graphql.EnablePullRequestAutoMerge',
+				'pulls.merge',
+			])
+			assert.deepEqual(calls[2][1], MERGE)
 		})
 	}
 
 	test('fails on other errors without merging', async () => {
 		const { github, calls } = recordingGitHub(session(), {}, {
-			graphql: graphqlError('Auto merge is not allowed for this repository'),
+			'graphql.PullRequestMergeState': mergeState(),
+			'graphql.EnablePullRequestAutoMerge': graphqlError(
+				'Auto merge is not allowed for this repository',
+			),
 		})
 
 		await assert.rejects(
 			github.enablePrAutoMerge(PULL_REQUEST, 'merge'),
 			/Auto merge is not allowed for this repository/,
 		)
-		assert.deepEqual(calls.map(([name]) => name), ['graphql'])
+		assert.deepEqual(calls.map(([name]) => name), [
+			'graphql.PullRequestMergeState',
+			'graphql.EnablePullRequestAutoMerge',
+		])
 	})
 })
 
