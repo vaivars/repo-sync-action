@@ -213,10 +213,30 @@ Alternatives to this flow:
 
 - `SKIP_PR: true` commits straight to the target branch and opens no pull request.
 - `FORK: <account>` pushes the branch to a fork under that account and opens the pull request from
-  the fork. The token must belong to that account. Labels, assignees and reviewers aren't applied in
-  this mode.
+  the fork. The token must belong to that account. Labels, assignees, reviewers and auto-merge
+  aren't applied in this mode.
 
 `SKIP_PR` and `FORK` can't be used together, and the run fails if both are set.
+
+### Auto-merge
+
+`PR_AUTOMERGE: true` enables [auto-merge](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/automatically-merging-a-pull-request)
+on the pull request after the labels, assignees and reviewers are added, so GitHub merges it once
+its required checks and reviews pass. `PR_AUTOMERGE_METHOD` picks `merge` (the default), `squash` or
+`rebase`. With a merge queue, the pull request always goes through the queue, which uses its own
+method.
+
+- Each target repository needs **Allow auto-merge** turned on in its settings, and the chosen merge
+  method allowed. Otherwise the run fails for that repository after opening the pull request.
+- Auto-merge waits only for what a branch protection rule or ruleset of the target branch requires.
+  When it requires no checks or reviews, or they have already passed, the action merges the pull
+  request right away. Checks that aren't required may not have started, finished or passed by then.
+- Before deciding, the action waits up to about 10 seconds for GitHub to work out whether a pull
+  request it just pushed to can be merged.
+- On later runs, auto-merge stays as it is when it's already on with the same method. Setting
+  `PR_AUTOMERGE` back to `false` doesn't turn it off on pull requests that already have it.
+- The token needs the access it already has to open the pull request: classic tokens `repo`,
+  fine-grained and App tokens write access to contents and pull requests.
 
 A workflow step that customizes the pull request:
 
@@ -226,7 +246,9 @@ A workflow step that customizes the pull request:
     GH_PAT: ${{ secrets.GH_PAT }}
     PR_LABELS: |
       sync
-      automerge
+      dependencies
+    PR_AUTOMERGE: true
+    PR_AUTOMERGE_METHOD: squash
     ASSIGNEES: octocat
     TEAM_REVIEWERS: platform
     PR_BODY: Synced from the shared configuration repository.
@@ -248,6 +270,8 @@ One of `GH_PAT` or `GH_INSTALLATION_TOKEN` is required. All other inputs are opt
 | `ASSIGNEES`             | Users to assign to the pull request, one per line                                                                           |                                      |
 | `REVIEWERS`             | Users to request a review from, one per line                                                                                |                                      |
 | `TEAM_REVIEWERS`        | Teams to request a review from, one per line                                                                                |                                      |
+| `PR_AUTOMERGE`          | Enable [auto-merge](#auto-merge) on the pull request. Not applied with `FORK`                                               | `false`                              |
+| `PR_AUTOMERGE_METHOD`   | How `PR_AUTOMERGE` merges: `merge`, `squash` or `rebase`                                                                    | `merge`                              |
 | `COMMIT_PREFIX`         | Prefix for commit messages and the pull request title                                                                       | `🔄`                                 |
 | `COMMIT_BODY`           | Text appended to every commit message after a blank line                                                                    |                                      |
 | `COMMIT_EACH_FILE`      | One commit per file entry instead of one commit for everything                                                              | `true`                               |

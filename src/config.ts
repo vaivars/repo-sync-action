@@ -23,6 +23,8 @@ export type Config = {
 	ASSIGNEES: string[] | undefined
 	REVIEWERS: string[] | undefined
 	TEAM_REVIEWERS: string[] | undefined
+	PR_AUTOMERGE: boolean
+	PR_AUTOMERGE_METHOD: MergeMethod
 	TMP_DIR: string
 	DRY_RUN: boolean
 	SKIP_CLEANUP: boolean
@@ -35,6 +37,10 @@ export type Config = {
 	// false when not set, undefined when the input is 'false'
 	FORK: string | false | undefined
 }
+
+// The ways GitHub can merge a pull request, which PR_AUTOMERGE_METHOD takes
+export const MERGE_METHODS = ['merge', 'squash', 'rebase'] as const
+export type MergeMethod = typeof MERGE_METHODS[number]
 
 // A repository to sync to, from a sync.yml key or repos entry like owner/name@branch
 export interface Repo {
@@ -136,6 +142,8 @@ try {
 		ASSIGNEES: { type: 'array' },
 		REVIEWERS: { type: 'array' },
 		TEAM_REVIEWERS: { type: 'array' },
+		PR_AUTOMERGE: { type: 'boolean', default: false },
+		PR_AUTOMERGE_METHOD: { default: 'merge', modifier: (method) => String(method).toLowerCase() },
 		TMP_DIR: { default: tmpDirIn(process.env.RUNNER_TEMP || os.tmpdir()) },
 		DRY_RUN: { type: 'boolean', default: false },
 		SKIP_CLEANUP: { type: 'boolean', default: false },
@@ -161,6 +169,15 @@ try {
 		throw new Error(
 			"FORK and SKIP_PR can't be used together: SKIP_PR pushes straight to the target branch, "
 				+ 'while FORK opens a pull request from a fork',
+		)
+	}
+
+	// getInput takes any string, so an unknown method fails the run here instead of after the PR opens
+	if (!MERGE_METHODS.includes(context.PR_AUTOMERGE_METHOD)) {
+		throw new Error(
+			`PR_AUTOMERGE_METHOD must be one of ${
+				MERGE_METHODS.join(', ')
+			}, not "${context.PR_AUTOMERGE_METHOD}"`,
 		)
 	}
 

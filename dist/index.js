@@ -11985,7 +11985,7 @@ module.exports = stream
 
 /***/ }),
 
-/***/ 1882:
+/***/ 9501:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 
@@ -12108,7 +12108,7 @@ module.exports = upgrade
 module.exports.request = __nccwpck_require__(4043)
 module.exports.stream = __nccwpck_require__(3560)
 module.exports.pipeline = __nccwpck_require__(6862)
-module.exports.upgrade = __nccwpck_require__(1882)
+module.exports.upgrade = __nccwpck_require__(9501)
 module.exports.connect = __nccwpck_require__(2279)
 
 
@@ -45442,6 +45442,8 @@ const {
 
 
 
+// The ways GitHub can merge a pull request, which PR_AUTOMERGE_METHOD takes
+const MERGE_METHODS = ['merge', 'squash', 'rebase'];
 const REPLACE_DEFAULT = true;
 const TEMPLATE_DEFAULT = false;
 const DELETE_ORPHANED_DEFAULT = false;
@@ -45480,6 +45482,8 @@ try {
         ASSIGNEES: { type: 'array' },
         REVIEWERS: { type: 'array' },
         TEAM_REVIEWERS: { type: 'array' },
+        PR_AUTOMERGE: { type: 'boolean', default: false },
+        PR_AUTOMERGE_METHOD: { default: 'merge', modifier: (method) => String(method).toLowerCase() },
         TMP_DIR: { default: tmpDirIn(process.env.RUNNER_TEMP || external_os_namespaceObject.tmpdir()) },
         DRY_RUN: { type: 'boolean', default: false },
         SKIP_CLEANUP: { type: 'boolean', default: false },
@@ -45501,6 +45505,10 @@ try {
     if (context.FORK && context.SKIP_PR) {
         throw new Error("FORK and SKIP_PR can't be used together: SKIP_PR pushes straight to the target branch, "
             + 'while FORK opens a pull request from a fork');
+    }
+    // getInput takes any string, so an unknown method fails the run here instead of after the PR opens
+    if (!MERGE_METHODS.includes(context.PR_AUTOMERGE_METHOD)) {
+        throw new Error(`PR_AUTOMERGE_METHOD must be one of ${MERGE_METHODS.join(', ')}, not "${context.PR_AUTOMERGE_METHOD}"`);
     }
     core_debug(JSON.stringify(context, null, 2));
     while (fs_extra_lib_default().existsSync(context.TMP_DIR)) {
@@ -51006,6 +51014,8 @@ throttling.VERSION = plugin_throttling_dist_bundle_VERSION;
 throttling.triggersNotification = triggersNotification;
 
 
+;// CONCATENATED MODULE: external "timers/promises"
+const promises_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("timers/promises");
 ;// CONCATENATED MODULE: ./src/dedent.ts
 // From https://github.com/MartinKolarik/dedent-js/blob/master/src/index.ts - MIT © 2015 Martin Kolárik
 function dedent(templateStrings, ...values) {
@@ -51142,12 +51152,46 @@ function formatChangedFiles(sections, maxLength = Infinity) {
 
 
 
+
 // GitHub's answer when createRef targets a branch that already exists. Octokit
 // appends the docs URL to the message, so match its start, not all of it.
 function isReferenceExistsError(error) {
     const requestError = error;
     return requestError.status === 422 && requestError.message.startsWith('Reference already exists');
 }
+// The merge states of a PR that nothing holds back, because the base branch requires no checks or
+// reviews that are still pending. GitHub's auto-merge refuses these, and they can be merged right
+// away. Unstable means that only checks that are not required are pending or failed, and has hooks
+// that GitHub Enterprise Server runs pre-receive hooks
+const MERGEABLE_NOW = ['CLEAN', 'HAS_HOOKS', 'UNSTABLE'];
+// GitHub's answer when auto-merge is enabled on a PR in one of the MERGEABLE_NOW states
+function isAlreadyMergeableError(error) {
+    return /Pull request is in (clean|has_hooks|unstable) status/.test(error.message);
+}
+// How often enablePrAutoMerge reads the merge state while GitHub is still working it out, which it
+// does for a moment after each push
+const MERGE_STATE_READS = 5;
+const MERGE_STATE = `
+	query PullRequestMergeState($pullRequestId: ID!) {
+		node(id: $pullRequestId) {
+			... on PullRequest {
+				mergeStateStatus
+				isMergeQueueEnabled
+				headRefOid
+				autoMergeRequest {
+					mergeMethod
+				}
+			}
+		}
+	}
+`;
+const ENABLE_AUTO_MERGE = `
+	mutation EnablePullRequestAutoMerge($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!) {
+		enablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId, mergeMethod: $mergeMethod }) {
+			clientMutationId
+		}
+	}
+`;
 // A client for the GitHub API that waits out rate limits
 function createOctokit(token) {
     return getOctokit(token, {
@@ -51183,12 +51227,16 @@ function treeEntries(treeDiff) {
 // installation token makes through the API, and the event that triggered the run
 class github_GitHub {
     api;
+    graphql;
     session;
     options;
     // The changes of the pushed commit by path, once getChangesFromLastCommit fetched them
     lastCommitChanges;
-    constructor(api, session, options) {
-        this.api = api;
+    // The milliseconds between two reads of a merge state that GitHub is still working out
+    mergeStateDelay = 2000;
+    constructor(octokit, session, options) {
+        this.api = octokit.rest;
+        this.graphql = octokit.graphql;
         this.session = session;
         this.options = options;
     }
@@ -51413,6 +51461,51 @@ class github_GitHub {
             pull_number: this.pr.number,
             team_reviewers: reviewers,
         });
+    }
+    // The PR's merge state, read again while GitHub is still working it out. After the last read it
+    // can still be UNKNOWN
+    async getMergeState(pullRequestId) {
+        for (let read = 1;; read++) {
+            const { node } = await this.graphql(MERGE_STATE, { pullRequestId });
+            if (node.mergeStateStatus !== 'UNKNOWN' || read === MERGE_STATE_READS)
+                return node;
+            core_debug(`The merge state is not known yet, reading it again in ${this.mergeStateDelay}ms`);
+            await (0,promises_namespaceObject.setTimeout)(this.mergeStateDelay);
+        }
+    }
+    // Turns on auto-merge, so that GitHub merges the PR once its required checks and reviews pass.
+    // A PR that nothing holds back is merged right away instead, which GitHub's auto-merge refuses
+    async enablePrAutoMerge(pullRequest, mergeMethod) {
+        const state = await this.getMergeState(pullRequest.node_id);
+        const method = mergeMethod.toUpperCase();
+        if (state.autoMergeRequest?.mergeMethod === method) {
+            core_debug(`Auto-merge is already enabled on PR #${pullRequest.number}`);
+            return 'enabled';
+        }
+        // A merge queue takes every PR through auto-merge, and refuses to merge one directly
+        if (state.isMergeQueueEnabled || !MERGEABLE_NOW.includes(state.mergeStateStatus)) {
+            try {
+                await this.graphql(ENABLE_AUTO_MERGE, {
+                    pullRequestId: pullRequest.node_id,
+                    mergeMethod: method,
+                });
+                return 'enabled';
+            }
+            catch (error) {
+                // The checks or reviews it was waiting for passed after the state was read
+                if (!isAlreadyMergeableError(error))
+                    throw error;
+            }
+        }
+        core_debug(`PR #${pullRequest.number} can be merged already, merging it`);
+        await this.api.pulls.merge({
+            ...this.target,
+            pull_number: pullRequest.number,
+            merge_method: mergeMethod,
+            // Fails instead of merging a commit pushed after the state was read
+            sha: state.headRefOid,
+        });
+        return 'merged';
     }
 }
 
@@ -51734,8 +51827,7 @@ class Git {
     prBranch;
     existingPr;
     constructor() {
-        // We only need the rest client
-        this.github = new github_GitHub(createOctokit(GITHUB_TOKEN).rest, this, {
+        this.github = new github_GitHub(createOctokit(GITHUB_TOKEN), this, {
             fork: FORK,
             skipPr: SKIP_PR,
             defaultTitle: defaultSyncMessage(COMMIT_PREFIX, GITHUB_REPOSITORY),
@@ -51935,6 +52027,9 @@ class Git {
     addPrTeamReviewers(reviewers) {
         return this.github.addPrTeamReviewers(reviewers);
     }
+    enablePrAutoMerge(pullRequest, mergeMethod) {
+        return this.github.enablePrAutoMerge(pullRequest, mergeMethod);
+    }
 }
 
 ;// CONCATENATED MODULE: ./src/index.ts
@@ -51947,7 +52042,7 @@ class Git {
 
 
 
-const { COMMIT_EACH_FILE, COMMIT_PREFIX: src_COMMIT_PREFIX, PR_LABELS, ASSIGNEES, DRY_RUN, TMP_DIR: src_TMP_DIR, SKIP_CLEANUP, OVERWRITE_EXISTING_PR: src_OVERWRITE_EXISTING_PR, SKIP_PR: src_SKIP_PR, ORIGINAL_MESSAGE, COMMIT_AS_PR_TITLE, FORK: src_FORK, REVIEWERS, TEAM_REVIEWERS, } = config;
+const { COMMIT_EACH_FILE, COMMIT_PREFIX: src_COMMIT_PREFIX, PR_LABELS, ASSIGNEES, DRY_RUN, TMP_DIR: src_TMP_DIR, SKIP_CLEANUP, OVERWRITE_EXISTING_PR: src_OVERWRITE_EXISTING_PR, SKIP_PR: src_SKIP_PR, ORIGINAL_MESSAGE, COMMIT_AS_PR_TITLE, FORK: src_FORK, REVIEWERS, TEAM_REVIEWERS, PR_AUTOMERGE, PR_AUTOMERGE_METHOD, } = config;
 async function run() {
     setTmpDir(src_TMP_DIR);
     const git = new Git();
@@ -52041,6 +52136,13 @@ async function processRepository(item, git, prUrls) {
                 && !src_FORK) {
                 info(`Adding team reviewer(s) "${TEAM_REVIEWERS.join(', ')}" to PR`);
                 await git.addPrTeamReviewers(TEAM_REVIEWERS);
+            }
+            if (PR_AUTOMERGE && !src_FORK) {
+                info(`Enabling auto-merge (${PR_AUTOMERGE_METHOD}) on PR`);
+                const automerge = await git.enablePrAutoMerge(pullRequest, PR_AUTOMERGE_METHOD);
+                if (automerge === 'merged') {
+                    notice(`Pull Request #${pullRequest.number} had no required checks or reviews to wait for and was merged`);
+                }
             }
         }
         info('\t');

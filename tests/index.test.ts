@@ -247,6 +247,153 @@ describe('run with real files and git', () => {
 	})
 })
 
+describe('run with PR_AUTOMERGE', () => {
+	// Syncs one changed file into each of the fake repositories `repos`, whose PRs are numbered from 1
+	// and whose PR calls are recorded in order. The fake enablePrAutoMerge answers what `automerge`
+	// returns for the PR's number. Returns the calls, notices, failures and outputs of the run
+	async function syncWith(
+		{ config = {}, automerge = () => 'enabled', repos = ['repo'] }: {
+			config?: Record<string, unknown>
+			automerge?: (number: number) => string
+			repos?: string[]
+		} = {},
+	) {
+		const calls: unknown[][] = []
+		const notices: string[] = []
+		const failures: string[] = []
+		const outputs: Record<string, unknown> = {}
+		let statusChecks = 0
+		let prs = 0
+		const git = {
+			workingDir: 'work',
+			initRepo: async () => {
+				statusChecks = 0
+			},
+			createPrBranch: async () => {},
+			findExistingPr: async () => undefined,
+			add: async () => {},
+			commit: async () => {},
+			push: async () => {},
+			isOneCommitPush: () => false,
+			stagedChanges: async () => [],
+			// Changes for the file, then nothing left for the final commit
+			hasChanges: async () => ++statusChecks === 1,
+			createOrUpdatePr: async () => {
+				calls.push(['createOrUpdatePr'])
+				const number = ++prs
+				return { number, body: '', html_url: `url/${number}`, node_id: `PR_${number}` }
+			},
+			addPrLabels: async (labels: string[]) => calls.push(['addPrLabels', labels]),
+			enablePrAutoMerge: async (
+				pullRequest: { number: number; node_id: string },
+				method: string,
+			) => {
+				calls.push(['enablePrAutoMerge', pullRequest.node_id, method])
+				return automerge(pullRequest.number)
+			},
+		}
+		const helpers = await import('../src/helpers.ts')
+		const { run } = await esmock.strict<typeof import('../src/index.ts')>('../src/index.ts', {
+			'../src/config.ts': {
+				default: {
+					COMMIT_EACH_FILE: true,
+					COMMIT_PREFIX: '🔄',
+					PR_LABELS: ['sync'],
+					DRY_RUN: false,
+					TMP_DIR: 'tmp',
+					SKIP_CLEANUP: true,
+					OVERWRITE_EXISTING_PR: true,
+					SKIP_PR: false,
+					ORIGINAL_MESSAGE: false,
+					COMMIT_AS_PR_TITLE: false,
+					FORK: false,
+					PR_AUTOMERGE: true,
+					PR_AUTOMERGE_METHOD: 'squash',
+					...config,
+				},
+				parseConfig: async () =>
+					repos.map((name) => ({
+						repo: { name, user: 'owner', fullName: `github.com/owner/${name}`, branch: 'main' },
+						files: [{ source: 'a.txt', dest: 'a.txt', replace: true }],
+					})),
+			},
+			'../src/git.ts': {
+				default: class {
+					constructor() {
+						return git
+					}
+				},
+			},
+			'../src/helpers.ts': {
+				...helpers,
+				copy: async () => {},
+				pathIsDirectory: async () => false,
+				remove: async () => {},
+			},
+			fs: { existsSync: () => true },
+			'@actions/core': {
+				...silentCore,
+				notice: (message: string) => notices.push(message),
+				setOutput: (name: string, value: unknown) => {
+					outputs[name] = value
+				},
+				setFailed: (message: string) => failures.push(message),
+			},
+		})
+
+		await run()
+
+		return { calls, notices, failures, outputs }
+	}
+
+	test('enables auto-merge with the method after the labels', async () => {
+		const { calls, notices, failures } = await syncWith()
+
+		assert.deepEqual(failures, [])
+		assert.deepEqual(calls, [
+			['createOrUpdatePr'],
+			['addPrLabels', ['sync']],
+			['enablePrAutoMerge', 'PR_1', 'squash'],
+		])
+		assert.deepEqual(notices, ['Pull Request #1 created/updated: url/1'])
+	})
+
+	test('says when the PR was merged right away', async () => {
+		const { notices, failures } = await syncWith({ automerge: () => 'merged' })
+
+		assert.deepEqual(failures, [])
+		assert.deepEqual(notices, [
+			'Pull Request #1 created/updated: url/1',
+			'Pull Request #1 had no required checks or reviews to wait for and was merged',
+		])
+	})
+
+	test('leaves auto-merge off without PR_AUTOMERGE, and with FORK', async () => {
+		const off = await syncWith({ config: { PR_AUTOMERGE: false } })
+		const fork = await syncWith({ config: { FORK: 'forker' } })
+
+		assert.deepEqual(off.calls, [['createOrUpdatePr'], ['addPrLabels', ['sync']]])
+		assert.deepEqual(fork.calls, [['createOrUpdatePr']])
+	})
+
+	test('fails only the repository whose auto-merge fails, and still outputs its PR', async () => {
+		const { calls, failures, outputs } = await syncWith({
+			repos: ['repo-a', 'repo-b'],
+			automerge: (number) => {
+				if (number === 1) throw new Error('Auto merge is not allowed for this repository')
+				return 'enabled'
+			},
+		})
+
+		assert.deepEqual(failures, ['Auto merge is not allowed for this repository'])
+		assert.deepEqual(calls.filter(([name]) => name === 'enablePrAutoMerge'), [
+			['enablePrAutoMerge', 'PR_1', 'squash'],
+			['enablePrAutoMerge', 'PR_2', 'squash'],
+		])
+		assert.deepEqual(outputs, { pull_request_urls: ['url/1', 'url/2'] })
+	})
+})
+
 describe('run with a repository that fails', () => {
 	// Runs the action for one repository whose clone throws `thrown`, and returns what it reported
 	async function failWith(thrown: unknown) {

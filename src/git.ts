@@ -3,7 +3,7 @@ import * as path from 'path'
 
 import { authEnv, basicCredentials } from './auth.ts'
 import config from './config.ts'
-import type { Repo } from './config.ts'
+import type { MergeMethod, Repo } from './config.ts'
 import {
 	hasStatusChanges,
 	parseGitDiffOutput,
@@ -64,8 +64,7 @@ export default class Git implements RepoSession {
 	existingPr: ExistingPr | undefined
 
 	constructor() {
-		// We only need the rest client
-		this.github = new GitHub(createOctokit(GITHUB_TOKEN).rest, this, {
+		this.github = new GitHub(createOctokit(GITHUB_TOKEN), this, {
 			fork: FORK,
 			skipPr: SKIP_PR,
 			defaultTitle: defaultSyncMessage(COMMIT_PREFIX, GITHUB_REPOSITORY),
@@ -340,5 +339,12 @@ export default class Git implements RepoSession {
 
 	addPrTeamReviewers(reviewers: string[]): Promise<void> {
 		return this.github.addPrTeamReviewers(reviewers)
+	}
+
+	enablePrAutoMerge(
+		pullRequest: PullRequest,
+		mergeMethod: MergeMethod,
+	): Promise<'enabled' | 'merged'> {
+		return this.github.enablePrAutoMerge(pullRequest, mergeMethod)
 	}
 }
