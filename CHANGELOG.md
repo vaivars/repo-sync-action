@@ -3,6 +3,12 @@
 All notable changes to this project are documented in this file. It is generated from
 [Conventional Commits](https://www.conventionalcommits.org) by [git-cliff](https://git-cliff.org).
 
+## [2.1.0](https://github.com/vaivars/repo-sync-action/compare/v2.0.0...v2.1.0) - 2026-10-30
+
+### Features
+
+- Add PR_AUTOMERGE to enable auto-merge on sync PRs ([#59](https://github.com/vaivars/repo-sync-action/pull/59))
+
 ## [2.0.0](https://github.com/vaivars/repo-sync-action/compare/v1.0.10...v2.0.0) - 2026-10-29
 
 ### Features
