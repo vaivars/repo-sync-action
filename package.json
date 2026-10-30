@@ -1,6 +1,6 @@
 {
   "name": "repo-sync-action",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "description": "GitHub Action to keep files like Action workflows or entire directories in sync between multiple repositories.",
   "main": "dist/index.js",
