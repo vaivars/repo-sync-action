@@ -238,6 +238,50 @@ describe('repo group names', () => {
 	})
 })
 
+describe('dest', () => {
+	// The dests parseConfig resolves for each repo, in order
+	const dests = (repos: SyncTarget[]) =>
+		repos.map(({ repo, files }) => [repo.uniqueName, files.map((file) => file.dest)])
+
+	test('renders the owner and name of each target repository', async () => {
+		const { parseConfig, warnings } = await loadConfig(`
+group:
+  - repos: |
+      user/service-a
+      other/service-b@main
+    files:
+      - source: shared/utils.py
+        dest: 'src/{{ repo.name | replace: "-", "_" }}/utils.py'
+      - source: shared/CODEOWNERS
+        dest: '.github/{{ repo.owner }}/CODEOWNERS'
+
+user/service-c:
+  - source: README.md
+    dest: 'docs/{{ repo.name }}.md'
+`)
+
+		assert.deepEqual(dests(await parseConfig()), [
+			['github.com/user/service-a@default', ['src/service_a/utils.py', '.github/user/CODEOWNERS']],
+			['github.com/other/service-b@main', ['src/service_b/utils.py', '.github/other/CODEOWNERS']],
+			['github.com/user/service-c@default', ['docs/service-c.md']],
+		])
+		assert.deepEqual(warnings, [])
+	})
+
+	test('fails on a variable other than the owner and name', async () => {
+		const { parseConfig } = await loadConfig(`
+user/repo:
+  - source: a.txt
+    dest: 'src/{{ repo.nmae }}/a.txt'
+`)
+
+		await assert.rejects(parseConfig(), {
+			message:
+				/^Can't render dest "src\/\{\{ repo\.nmae \}\}\/a\.txt" for github\.com\/user\/repo: /,
+		})
+	})
+})
+
 describe('action.yml', () => {
 	// Inputs whose default depends on the token or the runner, or that have none
 	const WITHOUT_DEFAULT = [

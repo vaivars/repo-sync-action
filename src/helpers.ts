@@ -4,7 +4,7 @@ import fs from 'fs-extra'
 import { Liquid } from 'liquidjs'
 import * as path from 'path'
 
-import type { FileEntry, Template } from './config.ts'
+import type { FileEntry, Repo, Template } from './config.ts'
 
 // What copy and getSyncedFileList read of a file entry
 export type CopyOptions = Partial<Pick<FileEntry, 'template' | 'deleteOrphaned' | 'exclude'>>
@@ -151,6 +151,20 @@ export function addTrailingSlash(str: string): string {
 export async function pathIsDirectory(path: string): Promise<boolean> {
 	const stat = await fs.lstat(path)
 	return stat.isDirectory()
+}
+
+export function renderDest(dest: string, repo: Repo): string {
+	try {
+		return String(liquid.parseAndRenderSync(
+			dest,
+			{ repo: { owner: repo.user, name: repo.name } },
+			{ strictVariables: true },
+		))
+	} catch (err) {
+		throw new Error(`Can't render dest "${dest}" for ${repo.fullName}: ${(err as Error).message}`, {
+			cause: err,
+		})
+	}
 }
 
 export async function write(src: string, dest: string, context: Template): Promise<void> {

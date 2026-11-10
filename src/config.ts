@@ -5,6 +5,8 @@ import * as yaml from 'js-yaml'
 import * as os from 'os'
 import * as path from 'path'
 
+import { renderDest } from './helpers.ts'
+
 // The token, where GitHub is, and the action's inputs
 export type Config = {
 	GITHUB_TOKEN: string
@@ -228,7 +230,7 @@ const parseExclude = (text: unknown, src: string): string[] | undefined => {
 
 // Returns the valid file entries. A missing or empty list yields none, and parseConfig skips the
 // repo with a warning if it ends up without any files
-const parseFiles = (files: unknown, target: string): FileEntry[] => {
+const parseFiles = (files: unknown, target: string, repo: Repo): FileEntry[] => {
 	if (!Array.isArray(files)) return []
 
 	return files.flatMap((item: unknown) => {
@@ -238,7 +240,7 @@ const parseFiles = (files: unknown, target: string): FileEntry[] => {
 		if (typeof entry?.source === 'string' && entry.source !== '') {
 			return [{
 				source: entry.source,
-				dest: entry.dest || entry.source,
+				dest: entry.dest ? renderDest(entry.dest, repo) : entry.source,
 				template: entry.template === undefined ? TEMPLATE_DEFAULT : entry.template,
 				replace: entry.replace === undefined ? REPLACE_DEFAULT : entry.replace,
 				deleteOrphaned: entry.deleteOrphaned === undefined
@@ -354,8 +356,8 @@ export async function parseConfig(): Promise<SyncTarget[]> {
 				const repos = resolveRepoList(group.repos, repoGroups)
 
 				repos.forEach((name) => {
-					const files = parseFiles(group.files, name)
 					const repo = parseRepoName(name)
+					const files = parseFiles(group.files, name, repo)
 
 					if (result[repo.uniqueName] !== undefined) {
 						result[repo.uniqueName].files.push(...files)
@@ -369,8 +371,8 @@ export async function parseConfig(): Promise<SyncTarget[]> {
 				})
 			})
 		} else {
-			const files = parseFiles(configObject[key], key)
 			const repo = parseRepoName(key)
+			const files = parseFiles(configObject[key], key, repo)
 
 			if (result[repo.uniqueName] !== undefined) {
 				result[repo.uniqueName].files.push(...files)
