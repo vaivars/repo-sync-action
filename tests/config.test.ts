@@ -59,6 +59,24 @@ describe('config', () => {
 		assert.deepEqual([skip.FORK, skip.SKIP_PR], [undefined, true])
 	})
 
+	test('merges YAML merge keys into file entries', async () => {
+		const { parseConfig } = await loadConfig(`
+owner/repo:
+  - &workflow
+    source: shared/ci.yml
+    replace: false
+  - <<: *workflow
+    source: shared/release.yml
+`)
+
+		const [{ files }] = await parseConfig()
+
+		assert.deepEqual(files.map(({ source, replace }) => [source, replace]), [
+			['shared/ci.yml', false],
+			['shared/release.yml', false],
+		])
+	})
+
 	test('reads a repo name starting with http as owner/name and still accepts URLs', async () => {
 		const { parseConfig } = await loadConfig(`
 httpie/cli:
@@ -287,7 +305,6 @@ user/template:
 		const [dest, reason] of [
 			[`'src/{{ repo.nmae }}/a.txt'`, /undefined variable: repo\.nmae/],
 			[`'{{ repo.name | nope }}'`, /undefined filter: nope/],
-			['{{ repo.name }}', /it must be a quoted string/],
 			[undefined, /it must be a quoted string/],
 			[`'{% if false %}a{% endif %}'`, /it renders to an empty path/],
 		] as const

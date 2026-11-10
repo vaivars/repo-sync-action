@@ -321,7 +321,9 @@ export async function parseConfig(): Promise<SyncTarget[]> {
 	const fileContent = await fs.promises.readFile(context.CONFIG_PATH)
 
 	// Not validated: a file that is not a mapping fails or is skipped below, as it did in JavaScript
-	const configObject = yaml.load(fileContent.toString()) as Record<string, unknown>
+	const configObject = yaml.load(fileContent.toString(), {
+		schema: yaml.CORE_SCHEMA.withTags(yaml.mergeTag),
+	}) as Record<string, unknown>
 
 	// Extract and validate repo_groups
 	const repoGroups = (configObject.repo_groups || {}) as Record<string, unknown>
