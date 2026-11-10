@@ -78,10 +78,11 @@ export interface SyncTarget {
 }
 
 // A file entry as sync.yml has it. YAML values keep whatever type they were written with: only
-// source and exclude are checked, the others pass through as they are
+// source, exclude and a dest to render are checked, the others pass through as they are
 interface FileEntryYml {
 	source?: unknown
 	dest?: string
+	renderDest?: boolean
 	template?: Template
 	replace?: boolean
 	deleteOrphaned?: boolean
@@ -240,7 +241,7 @@ const parseFiles = (files: unknown, target: string, repo: Repo): FileEntry[] => 
 		if (typeof entry?.source === 'string' && entry.source !== '') {
 			return [{
 				source: entry.source,
-				dest: entry.dest ? renderDest(entry.dest, repo) : entry.source,
+				dest: entry.renderDest ? renderDest(entry.dest, repo) : entry.dest || entry.source,
 				template: entry.template === undefined ? TEMPLATE_DEFAULT : entry.template,
 				replace: entry.replace === undefined ? REPLACE_DEFAULT : entry.replace,
 				deleteOrphaned: entry.deleteOrphaned === undefined

@@ -45542,14 +45542,19 @@ async function pathIsDirectory(path) {
     return stat.isDirectory();
 }
 function renderDest(dest, repo) {
+    const failure = (reason) => `Can't render dest ${JSON.stringify(dest)} for ${repo.fullName}: ${reason}`;
+    if (typeof dest !== 'string')
+        throw new Error(failure('it must be a string'));
+    let rendered;
     try {
-        return String(liquid.parseAndRenderSync(dest, { repo: { owner: repo.user, name: repo.name } }, { strictVariables: true }));
+        rendered = String(liquid.parseAndRenderSync(dest, { repo: { owner: repo.user, name: repo.name } }, { strictVariables: true }));
     }
     catch (err) {
-        throw new Error(`Can't render dest "${dest}" for ${repo.fullName}: ${err.message}`, {
-            cause: err,
-        });
+        throw new Error(failure(err.message), { cause: err });
     }
+    if (rendered === '')
+        throw new Error(failure('it renders to an empty path'));
+    return rendered;
 }
 async function write(src, dest, context) {
     if (typeof context !== 'object') {
@@ -45805,7 +45810,7 @@ const parseFiles = (files, target, repo) => {
         if (typeof entry?.source === 'string' && entry.source !== '') {
             return [{
                     source: entry.source,
-                    dest: entry.dest ? renderDest(entry.dest, repo) : entry.source,
+                    dest: entry.renderDest ? renderDest(entry.dest, repo) : entry.dest || entry.source,
                     template: entry.template === undefined ? TEMPLATE_DEFAULT : entry.template,
                     replace: entry.replace === undefined ? REPLACE_DEFAULT : entry.replace,
                     deleteOrphaned: entry.deleteOrphaned === undefined

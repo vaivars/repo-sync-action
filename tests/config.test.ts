@@ -243,7 +243,7 @@ describe('dest', () => {
 	const dests = (repos: SyncTarget[]) =>
 		repos.map(({ repo, files }) => [repo.uniqueName, files.map((file) => file.dest)])
 
-	test('renders the owner and name of each target repository', async () => {
+	test('renders the owner and name of each target repository with renderDest', async () => {
 		const { parseConfig, warnings } = await loadConfig(`
 group:
   - repos: |
@@ -252,12 +252,15 @@ group:
     files:
       - source: shared/utils.py
         dest: 'src/{{ repo.name | replace: "-", "_" }}/utils.py'
+        renderDest: true
       - source: shared/CODEOWNERS
         dest: '.github/{{ repo.owner }}/CODEOWNERS'
+        renderDest: true
 
 user/service-c:
   - source: README.md
     dest: 'docs/{{ repo.name }}.md'
+    renderDest: true
 `)
 
 		assert.deepEqual(dests(await parseConfig()), [
@@ -268,17 +271,50 @@ user/service-c:
 		assert.deepEqual(warnings, [])
 	})
 
-	test('fails on a variable other than the owner and name', async () => {
+	test('keeps a dest without renderDest as written', async () => {
+		const { parseConfig } = await loadConfig(`
+user/template:
+  - source: shared/
+    dest: '{{cookiecutter.project_slug}}/'
+`)
+
+		assert.deepEqual(dests(await parseConfig()), [
+			['github.com/user/template@default', ['{{cookiecutter.project_slug}}/']],
+		])
+	})
+
+	for (
+		const [dest, reason] of [
+			[`'src/{{ repo.nmae }}/a.txt'`, /undefined variable: repo\.nmae/],
+			[`'{{ repo.name | nope }}'`, /undefined filter: nope/],
+			['{{ repo.name }}', /it must be a string/],
+			[`'{% if false %}a{% endif %}'`, /it renders to an empty path/],
+		] as const
+	) {
+		test(`fails to render ${dest}`, async () => {
+			const { parseConfig } = await loadConfig(`
+user/repo:
+  - source: a.txt
+    dest: ${dest}
+    renderDest: true
+`)
+
+			await assert.rejects(parseConfig(), (err: Error) => {
+				assert.match(err.message, /^Can't render dest .* for github\.com\/user\/repo: /)
+				assert.match(err.message, reason)
+				return true
+			})
+		})
+	}
+
+	test('fails to render a missing dest', async () => {
 		const { parseConfig } = await loadConfig(`
 user/repo:
   - source: a.txt
-    dest: 'src/{{ repo.nmae }}/a.txt'
+    renderDest: true
 `)
 
-		await assert.rejects(parseConfig(), {
-			message:
-				/^Can't render dest "src\/\{\{ repo\.nmae \}\}\/a\.txt" for github\.com\/user\/repo: /,
-		})
+		await assert.rejects(parseConfig(), { message: /it must be a string/ })
 	})
 })
 
