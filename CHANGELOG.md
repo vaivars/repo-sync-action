@@ -3,6 +3,12 @@
 All notable changes to this project are documented in this file. It is generated from
 [Conventional Commits](https://www.conventionalcommits.org) by [git-cliff](https://git-cliff.org).
 
+## [2.2.0](https://github.com/vaivars/repo-sync-action/compare/v2.1.0...v2.2.0) - 2026-11-10
+
+### Features
+
+- Add renderDest to render the target repository's owner and name in dest ([#65](https://github.com/vaivars/repo-sync-action/pull/65))
+
 ## [2.1.0](https://github.com/vaivars/repo-sync-action/compare/v2.0.0...v2.1.0) - 2026-10-30
 
 ### Features
