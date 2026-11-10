@@ -287,15 +287,16 @@ user/template:
 		const [dest, reason] of [
 			[`'src/{{ repo.nmae }}/a.txt'`, /undefined variable: repo\.nmae/],
 			[`'{{ repo.name | nope }}'`, /undefined filter: nope/],
-			['{{ repo.name }}', /it must be a string/],
+			['{{ repo.name }}', /it must be a quoted string/],
+			[undefined, /it must be a quoted string/],
 			[`'{% if false %}a{% endif %}'`, /it renders to an empty path/],
 		] as const
 	) {
-		test(`fails to render ${dest}`, async () => {
+		test(`fails to render ${dest ?? 'a missing dest'}`, async () => {
 			const { parseConfig } = await loadConfig(`
 user/repo:
   - source: a.txt
-    dest: ${dest}
+    ${dest === undefined ? '' : `dest: ${dest}`}
     renderDest: true
 `)
 
@@ -306,16 +307,6 @@ user/repo:
 			})
 		})
 	}
-
-	test('fails to render a missing dest', async () => {
-		const { parseConfig } = await loadConfig(`
-user/repo:
-  - source: a.txt
-    renderDest: true
-`)
-
-		await assert.rejects(parseConfig(), { message: /it must be a string/ })
-	})
 })
 
 describe('action.yml', () => {

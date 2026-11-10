@@ -154,24 +154,21 @@ export async function pathIsDirectory(path: string): Promise<boolean> {
 }
 
 export function renderDest(dest: unknown, repo: Repo): string {
-	const failure = (reason: string) =>
-		`Can't render dest ${JSON.stringify(dest)} for ${repo.fullName}: ${reason}`
-
-	if (typeof dest !== 'string') throw new Error(failure('it must be a string'))
-
-	let rendered: string
 	try {
-		rendered = String(liquid.parseAndRenderSync(
+		if (typeof dest !== 'string') throw new Error('it must be a quoted string')
+		const rendered = String(liquid.parseAndRenderSync(
 			dest,
 			{ repo: { owner: repo.user, name: repo.name } },
 			{ strictVariables: true },
 		))
+		if (rendered === '') throw new Error('it renders to an empty path')
+		return rendered
 	} catch (err) {
-		throw new Error(failure((err as Error).message), { cause: err })
+		throw new Error(
+			`Can't render dest ${JSON.stringify(dest)} for ${repo.fullName}: ${(err as Error).message}`,
+			{ cause: err },
+		)
 	}
-
-	if (rendered === '') throw new Error(failure('it renders to an empty path'))
-	return rendered
 }
 
 export async function write(src: string, dest: string, context: Template): Promise<void> {

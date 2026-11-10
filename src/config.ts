@@ -231,7 +231,7 @@ const parseExclude = (text: unknown, src: string): string[] | undefined => {
 
 // Returns the valid file entries. A missing or empty list yields none, and parseConfig skips the
 // repo with a warning if it ends up without any files
-const parseFiles = (files: unknown, target: string, repo: Repo): FileEntry[] => {
+const parseFiles = (files: unknown, repo: Repo): FileEntry[] => {
 	if (!Array.isArray(files)) return []
 
 	return files.flatMap((item: unknown) => {
@@ -251,7 +251,9 @@ const parseFiles = (files: unknown, target: string, repo: Repo): FileEntry[] => 
 			}]
 		}
 
-		core.warning(`Skipping a file entry for ${target} without a source: ${JSON.stringify(item)}`)
+		core.warning(
+			`Skipping a file entry for ${repo.uniqueName} without a source: ${JSON.stringify(item)}`,
+		)
 		return []
 	})
 }
@@ -341,6 +343,11 @@ export async function parseConfig(): Promise<SyncTarget[]> {
 	}
 
 	const result: Record<string, SyncTarget> = {}
+	const addTarget = (name: string, files: unknown) => {
+		const repo = parseRepoName(name)
+		result[repo.uniqueName] ??= { repo, files: [] }
+		result[repo.uniqueName].files.push(...parseFiles(files, repo))
+	}
 
 	Object.keys(configObject).forEach((key) => {
 		// Skip the repo_groups key as it's not a sync target
@@ -354,36 +361,10 @@ export async function parseConfig(): Promise<SyncTarget[]> {
 			const groups = (Array.isArray(rawObject) ? rawObject : [rawObject]) as GroupYml[]
 
 			groups.forEach((group) => {
-				const repos = resolveRepoList(group.repos, repoGroups)
-
-				repos.forEach((name) => {
-					const repo = parseRepoName(name)
-					const files = parseFiles(group.files, name, repo)
-
-					if (result[repo.uniqueName] !== undefined) {
-						result[repo.uniqueName].files.push(...files)
-						return
-					}
-
-					result[repo.uniqueName] = {
-						repo,
-						files,
-					}
-				})
+				resolveRepoList(group.repos, repoGroups).forEach((name) => addTarget(name, group.files))
 			})
 		} else {
-			const repo = parseRepoName(key)
-			const files = parseFiles(configObject[key], key, repo)
-
-			if (result[repo.uniqueName] !== undefined) {
-				result[repo.uniqueName].files.push(...files)
-				return
-			}
-
-			result[repo.uniqueName] = {
-				repo,
-				files,
-			}
+			addTarget(key, configObject[key])
 		}
 	})
 

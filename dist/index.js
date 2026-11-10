@@ -45542,19 +45542,17 @@ async function pathIsDirectory(path) {
     return stat.isDirectory();
 }
 function renderDest(dest, repo) {
-    const failure = (reason) => `Can't render dest ${JSON.stringify(dest)} for ${repo.fullName}: ${reason}`;
-    if (typeof dest !== 'string')
-        throw new Error(failure('it must be a string'));
-    let rendered;
     try {
-        rendered = String(liquid.parseAndRenderSync(dest, { repo: { owner: repo.user, name: repo.name } }, { strictVariables: true }));
+        if (typeof dest !== 'string')
+            throw new Error('it must be a quoted string');
+        const rendered = String(liquid.parseAndRenderSync(dest, { repo: { owner: repo.user, name: repo.name } }, { strictVariables: true }));
+        if (rendered === '')
+            throw new Error('it renders to an empty path');
+        return rendered;
     }
     catch (err) {
-        throw new Error(failure(err.message), { cause: err });
+        throw new Error(`Can't render dest ${JSON.stringify(dest)} for ${repo.fullName}: ${err.message}`, { cause: err });
     }
-    if (rendered === '')
-        throw new Error(failure('it renders to an empty path'));
-    return rendered;
 }
 async function write(src, dest, context) {
     if (typeof context !== 'object') {
@@ -45800,7 +45798,7 @@ const parseExclude = (text, src) => {
 };
 // Returns the valid file entries. A missing or empty list yields none, and parseConfig skips the
 // repo with a warning if it ends up without any files
-const parseFiles = (files, target, repo) => {
+const parseFiles = (files, repo) => {
     if (!Array.isArray(files))
         return [];
     return files.flatMap((item) => {
@@ -45819,7 +45817,7 @@ const parseFiles = (files, target, repo) => {
                     exclude: parseExclude(entry.exclude, entry.source),
                 }];
         }
-        warning(`Skipping a file entry for ${target} without a source: ${JSON.stringify(item)}`);
+        warning(`Skipping a file entry for ${repo.uniqueName} without a source: ${JSON.stringify(item)}`);
         return [];
     });
 };
@@ -45883,6 +45881,11 @@ async function parseConfig() {
         core_debug(`Loaded ${Object.keys(repoGroups).length} repo group(s): ${Object.keys(repoGroups).join(', ')}`);
     }
     const result = {};
+    const addTarget = (name, files) => {
+        const repo = parseRepoName(name);
+        result[repo.uniqueName] ??= { repo, files: [] };
+        result[repo.uniqueName].files.push(...parseFiles(files, repo));
+    };
     Object.keys(configObject).forEach((key) => {
         // Skip the repo_groups key as it's not a sync target
         if (key === 'repo_groups') {
@@ -45892,32 +45895,11 @@ async function parseConfig() {
             const rawObject = configObject[key];
             const groups = (Array.isArray(rawObject) ? rawObject : [rawObject]);
             groups.forEach((group) => {
-                const repos = resolveRepoList(group.repos, repoGroups);
-                repos.forEach((name) => {
-                    const repo = parseRepoName(name);
-                    const files = parseFiles(group.files, name, repo);
-                    if (result[repo.uniqueName] !== undefined) {
-                        result[repo.uniqueName].files.push(...files);
-                        return;
-                    }
-                    result[repo.uniqueName] = {
-                        repo,
-                        files,
-                    };
-                });
+                resolveRepoList(group.repos, repoGroups).forEach((name) => addTarget(name, group.files));
             });
         }
         else {
-            const repo = parseRepoName(key);
-            const files = parseFiles(configObject[key], key, repo);
-            if (result[repo.uniqueName] !== undefined) {
-                result[repo.uniqueName].files.push(...files);
-                return;
-            }
-            result[repo.uniqueName] = {
-                repo,
-                files,
-            };
+            addTarget(key, configObject[key]);
         }
     });
     return Object.values(result).filter(({ repo, files }) => {
