@@ -95,6 +95,7 @@ An entry is either a path, which is synced to the same path in the target, or an
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------- |
 | `source`         | File or directory in this repository                                                                                                 | required         |
 | `dest`           | Path in the target repository                                                                                                        | same as `source` |
+| `renderDest`     | Render `dest` with the target repository's owner and name, see [Destinations per repository](#destinations-per-repository)           | `false`          |
 | `exclude`        | Directories only. Paths relative to `source` to skip, one per line in a block string (`\|`). End a path with `/` to skip a directory | none             |
 | `deleteOrphaned` | Directories only. Delete files in `dest` that don't exist in `source`                                                                | `false`          |
 | `replace`        | Set to `false` to leave `dest` untouched if it already exists. For a directory, this skips the whole directory                       | `true`           |
@@ -193,6 +194,34 @@ group:
 
 `repos` accepts a repository group name, or a block string (`|`) with one repository or group name
 per line. A YAML list in `repos` is used as-is, and its entries are not expanded as group names.
+
+### Destinations per repository
+
+With `renderDest: true`, `dest` is rendered with Liquid for each target repository, with its owner
+and name as `repo.owner` and `repo.name`, so one entry can sync to a different path in each
+repository:
+
+```yml
+group:
+  - repos: |
+      owner/service-a
+      owner/service-b
+    files:
+      - source: shared/utils.py
+        dest: 'src/{{ repo.name | replace: "-", "_" }}/utils.py'
+        renderDest: true
+```
+
+This syncs `shared/utils.py` to `src/service_a/utils.py` in `owner/service-a` and to
+`src/service_b/utils.py` in `owner/service-b`.
+
+- Without `renderDest`, `dest` is used as written, so paths like `{{cookiecutter.project_slug}}/`
+  keep working. `source` is never rendered, and `template` only applies to file contents.
+- `repo.owner` and `repo.name` are the only variables, and only in `dest`. Any other variable, an
+  unknown tag or filter, a missing `dest` or one that renders to an empty path fails the run before
+  any repository is synced.
+- Quote a rendered `dest`. YAML reads a value that starts with `{` or contains a colon followed by
+  a space as a mapping.
 
 ## Pull requests and commits
 

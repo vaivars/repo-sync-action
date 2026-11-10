@@ -45435,7 +45435,257 @@ const {
 
 //# sourceMappingURL=js-yaml.mjs.map
 
+// EXTERNAL MODULE: ./node_modules/liquidjs/dist/liquid.node.js
+var liquid_node = __nccwpck_require__(8694);
+;// CONCATENATED MODULE: ./src/helpers.ts
+
+
+
+
+
+// The target repository clones live in TMP_DIR. index.ts passes it in, since importing config.ts
+// here would read the action inputs
+let tmpDir;
+function setTmpDir(dir) {
+    tmpDir = external_path_.resolve(dir);
+}
+function realpathOrSelf(file) {
+    try {
+        return fs_extra_lib_default().realpathSync(file);
+    }
+    catch {
+        return file;
+    }
+}
+// Paths that templates and sync sources must not read: git metadata, which can hold credentials,
+// and the clones of the target repositories in TMP_DIR
+function isProtectedPath(file) {
+    const resolved = external_path_.resolve(file);
+    const candidates = [resolved, realpathOrSelf(resolved)];
+    const tmpDirs = tmpDir === undefined ? [] : [tmpDir, realpathOrSelf(tmpDir)];
+    return candidates.some((candidate) => candidate.split(external_path_.sep).includes('.git')
+        || tmpDirs.some((dir) => candidate === dir || candidate.startsWith(dir + external_path_.sep)));
+}
+function assertUnprotected(file) {
+    if (isProtectedPath(file))
+        throw new Error(`Templates can't read ${file}`);
+}
+// LiquidJS' own file system, with protected paths treated as missing and never read
+const liquidFs = new liquid_node/* Liquid */.HX().options.fs;
+const templateFs = {
+    ...liquidFs,
+    exists: async (file) => !isProtectedPath(file) && liquidFs.exists(file),
+    existsSync: (file) => !isProtectedPath(file) && liquidFs.existsSync(file),
+    readFile: async (file) => {
+        assertUnprotected(file);
+        return liquidFs.readFile(file);
+    },
+    readFileSync: (file) => {
+        assertUnprotected(file);
+        return liquidFs.readFileSync(file);
+    },
+};
+// Templates may come from anyone who can change the source repository, so they are rendered
+// without access to JavaScript objects, can only load files below the working directory outside
+// of protected paths, and are limited in what they can parse, allocate and spend rendering
+const liquid = new liquid_node/* Liquid */.HX({
+    root: process.cwd(),
+    fs: templateFs,
+    cache: true,
+    strictFilters: true,
+    // Already the LiquidJS default, set explicitly so templates never read inherited properties
+    ownPropertyOnly: true,
+    // Empty strings and 0 are false, as they were with Nunjucks in v1
+    jsTruthy: true,
+    // Values are inserted as they are, since templates are config and code files, not HTML.
+    // Arrays print comma separated, as they did with Nunjucks in v1
+    outputEscape: (value) => (Array.isArray(value) ? value.join(',') : value),
+    parseLimit: 10_000_000,
+    memoryLimit: 100_000_000,
+    renderLimit: 30_000,
+});
+function runFile(file, args, workingDir, options) {
+    core_debug(`EXEC: "${file} ${args.join(' ')}" IN ${workingDir}`);
+    return new Promise((resolve, reject) => {
+        external_child_process_namespaceObject.execFile(file, args, {
+            cwd: workingDir,
+            ...options,
+        }, function (error, stdout) {
+            if (error)
+                reject(error);
+            else
+                resolve(stdout);
+        });
+    });
+}
+// Runs a program without a shell and resolves with its stdout as text, trimmed unless trimResult
+// is false. The variables in env are added to the program's environment
+async function execFile(file, args, workingDir, { trimResult = true, env } = {}) {
+    const stdout = await runFile(file, args, workingDir, {
+        maxBuffer: 1024 * 1024 * 4,
+        env: env === undefined ? undefined : { ...process.env, ...env },
+    });
+    return trimResult ? stdout.trim() : stdout;
+}
+// Runs a program without a shell and resolves with its stdout as raw bytes, with no size limit
+function execFileBuffer(file, args, workingDir) {
+    return runFile(file, args, workingDir, {
+        encoding: 'buffer',
+        maxBuffer: Infinity,
+    });
+}
+function addTrailingSlash(str) {
+    return str.endsWith('/') ? str : str + '/';
+}
+async function pathIsDirectory(path) {
+    const stat = await fs_extra_lib_default().lstat(path);
+    return stat.isDirectory();
+}
+function renderDest(dest, repo) {
+    try {
+        if (typeof dest !== 'string')
+            throw new Error('it must be a quoted string');
+        const rendered = String(liquid.parseAndRenderSync(dest, { repo: { owner: repo.user, name: repo.name } }, { strictVariables: true }));
+        if (rendered === '')
+            throw new Error('it renders to an empty path');
+        return rendered;
+    }
+    catch (err) {
+        throw new Error(`Can't render dest ${JSON.stringify(dest)} for ${repo.fullName}: ${err.message}`, { cause: err });
+    }
+}
+async function write(src, dest, context) {
+    if (typeof context !== 'object') {
+        context = {};
+    }
+    const content = await liquid.renderFile(src, context);
+    await fs_extra_lib_default().outputFile(dest, content);
+}
+// An exclude entry matches the path itself and everything below it, the same way fs.copy skips
+// the whole subtree of a directory that the filter rejects. Entries carry the source prefix
+function isExcluded(exclude, filePath) {
+    return exclude !== undefined
+        && exclude.some((entry) => filePath === entry || filePath.startsWith(addTrailingSlash(entry)));
+}
+function createFilterFunc(file) {
+    return (filePath) => {
+        if (isExcluded(file.exclude, filePath)) {
+            core_debug(`Excluding file ${filePath} since it or a parent directory is excluded.`);
+            return false;
+        }
+        return true;
+    };
+}
+async function copy(src, dest, isDirectory, file) {
+    const deleteOrphaned = isDirectory && file.deleteOrphaned;
+    const filterFunc = createFilterFunc(file);
+    if (file.template) {
+        if (isDirectory) {
+            core_debug(`Render all files in directory ${src} to ${dest}`);
+            const srcFileList = await readfiles(src, {
+                readContents: false,
+                hidden: true,
+            });
+            for (const srcFile of srcFileList) {
+                const srcPath = external_path_.join(src, srcFile);
+                // Exclude entries carry the source prefix, like the paths fs.copy passes to the filter
+                if (!filterFunc(srcPath)) {
+                    continue;
+                }
+                const destPath = external_path_.join(dest, srcFile);
+                await write(srcPath, destPath, file.template);
+            }
+        }
+        else {
+            core_debug(`Render file ${src} to ${dest}`);
+            await write(src, dest, file.template);
+        }
+    }
+    else {
+        core_debug(`Copy ${src} to ${dest}`);
+        await fs_extra_lib_default().copy(src, dest, file.exclude !== undefined ? { filter: filterFunc } : undefined);
+    }
+    // If it is a directory and deleteOrphaned is enabled - check if there are any files that were removed from source dir and remove them in destination dir
+    if (deleteOrphaned) {
+        const srcFileList = await readfiles(src, {
+            readContents: false,
+            hidden: true,
+        });
+        const destFileList = await readfiles(dest, {
+            readContents: false,
+            hidden: true,
+        });
+        for (const destFile of destFileList) {
+            if (destFile.startsWith('.git'))
+                continue;
+            if (srcFileList.indexOf(destFile) === -1) {
+                const filePath = external_path_.join(dest, destFile);
+                core_debug(`Found an orphaned file in the target repo - ${filePath}`);
+                if (isExcluded(file.exclude, external_path_.join(src, destFile))) {
+                    core_debug(`Excluding file ${destFile}`);
+                }
+                else {
+                    core_debug(`Removing file ${destFile}`);
+                    await fs_extra_lib_default().remove(filePath);
+                }
+            }
+        }
+    }
+}
+async function getSyncedFileList(src, dest, isDirectory, file) {
+    const filterFunc = createFilterFunc(file);
+    if (isDirectory) {
+        const srcFileList = await readfiles(src, {
+            readContents: false,
+            hidden: true,
+        });
+        return srcFileList
+            .filter((srcFile) => filterFunc(external_path_.join(src, srcFile)))
+            .map((srcFile) => external_path_.join(dest, srcFile));
+    }
+    else {
+        return [dest];
+    }
+}
+async function remove(src) {
+    core_debug(`RM: ${src}`);
+    return fs_extra_lib_default().remove(src);
+}
+function arrayEquals(array1, array2) {
+    return (Array.isArray(array1)
+        && Array.isArray(array2)
+        && array1.length === array2.length
+        && array1.every((value, i) => value === array2[i]));
+}
+// Custom readfiles implementation to replace node-readfiles. The options are accepted, but hidden
+// files are always listed
+async function readfiles(dir, options = {}) {
+    const files = [];
+    try {
+        const items = await fs_extra_lib_default().readdir(dir);
+        for (const item of items) {
+            const fullPath = external_path_.join(dir, item);
+            const stat = await fs_extra_lib_default().stat(fullPath);
+            if (stat.isDirectory()) {
+                const subFiles = await readfiles(fullPath, options);
+                files.push(...subFiles.map((f) => external_path_.join(item, f)));
+            }
+            else {
+                files.push(item);
+            }
+        }
+    }
+    catch (err) {
+        if (err.code === 'ENOENT') {
+            return [];
+        }
+        throw err;
+    }
+    return files;
+}
+
 ;// CONCATENATED MODULE: ./src/config.ts
+
 
 
 
@@ -45548,7 +45798,7 @@ const parseExclude = (text, src) => {
 };
 // Returns the valid file entries. A missing or empty list yields none, and parseConfig skips the
 // repo with a warning if it ends up without any files
-const parseFiles = (files, target) => {
+const parseFiles = (files, repo) => {
     if (!Array.isArray(files))
         return [];
     return files.flatMap((item) => {
@@ -45558,7 +45808,7 @@ const parseFiles = (files, target) => {
         if (typeof entry?.source === 'string' && entry.source !== '') {
             return [{
                     source: entry.source,
-                    dest: entry.dest || entry.source,
+                    dest: entry.renderDest ? renderDest(entry.dest, repo) : entry.dest || entry.source,
                     template: entry.template === undefined ? TEMPLATE_DEFAULT : entry.template,
                     replace: entry.replace === undefined ? REPLACE_DEFAULT : entry.replace,
                     deleteOrphaned: entry.deleteOrphaned === undefined
@@ -45567,7 +45817,7 @@ const parseFiles = (files, target) => {
                     exclude: parseExclude(entry.exclude, entry.source),
                 }];
         }
-        warning(`Skipping a file entry for ${target} without a source: ${JSON.stringify(item)}`);
+        warning(`Skipping a file entry for ${repo.uniqueName} without a source: ${JSON.stringify(item)}`);
         return [];
     });
 };
@@ -45631,6 +45881,11 @@ async function parseConfig() {
         core_debug(`Loaded ${Object.keys(repoGroups).length} repo group(s): ${Object.keys(repoGroups).join(', ')}`);
     }
     const result = {};
+    const addTarget = (name, files) => {
+        const repo = parseRepoName(name);
+        result[repo.uniqueName] ??= { repo, files: [] };
+        result[repo.uniqueName].files.push(...parseFiles(files, repo));
+    };
     Object.keys(configObject).forEach((key) => {
         // Skip the repo_groups key as it's not a sync target
         if (key === 'repo_groups') {
@@ -45640,32 +45895,11 @@ async function parseConfig() {
             const rawObject = configObject[key];
             const groups = (Array.isArray(rawObject) ? rawObject : [rawObject]);
             groups.forEach((group) => {
-                const repos = resolveRepoList(group.repos, repoGroups);
-                repos.forEach((name) => {
-                    const files = parseFiles(group.files, name);
-                    const repo = parseRepoName(name);
-                    if (result[repo.uniqueName] !== undefined) {
-                        result[repo.uniqueName].files.push(...files);
-                        return;
-                    }
-                    result[repo.uniqueName] = {
-                        repo,
-                        files,
-                    };
-                });
+                resolveRepoList(group.repos, repoGroups).forEach((name) => addTarget(name, group.files));
             });
         }
         else {
-            const files = parseFiles(configObject[key], key);
-            const repo = parseRepoName(key);
-            if (result[repo.uniqueName] !== undefined) {
-                result[repo.uniqueName].files.push(...files);
-                return;
-            }
-            result[repo.uniqueName] = {
-                repo,
-                files,
-            };
+            addTarget(key, configObject[key]);
         }
     });
     return Object.values(result).filter(({ repo, files }) => {
@@ -51507,242 +51741,6 @@ class github_GitHub {
         });
         return 'merged';
     }
-}
-
-// EXTERNAL MODULE: ./node_modules/liquidjs/dist/liquid.node.js
-var liquid_node = __nccwpck_require__(8694);
-;// CONCATENATED MODULE: ./src/helpers.ts
-
-
-
-
-
-// The target repository clones live in TMP_DIR. index.ts passes it in, since importing config.ts
-// here would read the action inputs
-let tmpDir;
-function setTmpDir(dir) {
-    tmpDir = external_path_.resolve(dir);
-}
-function realpathOrSelf(file) {
-    try {
-        return fs_extra_lib_default().realpathSync(file);
-    }
-    catch {
-        return file;
-    }
-}
-// Paths that templates and sync sources must not read: git metadata, which can hold credentials,
-// and the clones of the target repositories in TMP_DIR
-function isProtectedPath(file) {
-    const resolved = external_path_.resolve(file);
-    const candidates = [resolved, realpathOrSelf(resolved)];
-    const tmpDirs = tmpDir === undefined ? [] : [tmpDir, realpathOrSelf(tmpDir)];
-    return candidates.some((candidate) => candidate.split(external_path_.sep).includes('.git')
-        || tmpDirs.some((dir) => candidate === dir || candidate.startsWith(dir + external_path_.sep)));
-}
-function assertUnprotected(file) {
-    if (isProtectedPath(file))
-        throw new Error(`Templates can't read ${file}`);
-}
-// LiquidJS' own file system, with protected paths treated as missing and never read
-const liquidFs = new liquid_node/* Liquid */.HX().options.fs;
-const templateFs = {
-    ...liquidFs,
-    exists: async (file) => !isProtectedPath(file) && liquidFs.exists(file),
-    existsSync: (file) => !isProtectedPath(file) && liquidFs.existsSync(file),
-    readFile: async (file) => {
-        assertUnprotected(file);
-        return liquidFs.readFile(file);
-    },
-    readFileSync: (file) => {
-        assertUnprotected(file);
-        return liquidFs.readFileSync(file);
-    },
-};
-// Templates may come from anyone who can change the source repository, so they are rendered
-// without access to JavaScript objects, can only load files below the working directory outside
-// of protected paths, and are limited in what they can parse, allocate and spend rendering
-const liquid = new liquid_node/* Liquid */.HX({
-    root: process.cwd(),
-    fs: templateFs,
-    cache: true,
-    strictFilters: true,
-    // Already the LiquidJS default, set explicitly so templates never read inherited properties
-    ownPropertyOnly: true,
-    // Empty strings and 0 are false, as they were with Nunjucks in v1
-    jsTruthy: true,
-    // Values are inserted as they are, since templates are config and code files, not HTML.
-    // Arrays print comma separated, as they did with Nunjucks in v1
-    outputEscape: (value) => (Array.isArray(value) ? value.join(',') : value),
-    parseLimit: 10_000_000,
-    memoryLimit: 100_000_000,
-    renderLimit: 30_000,
-});
-function runFile(file, args, workingDir, options) {
-    core_debug(`EXEC: "${file} ${args.join(' ')}" IN ${workingDir}`);
-    return new Promise((resolve, reject) => {
-        external_child_process_namespaceObject.execFile(file, args, {
-            cwd: workingDir,
-            ...options,
-        }, function (error, stdout) {
-            if (error)
-                reject(error);
-            else
-                resolve(stdout);
-        });
-    });
-}
-// Runs a program without a shell and resolves with its stdout as text, trimmed unless trimResult
-// is false. The variables in env are added to the program's environment
-async function execFile(file, args, workingDir, { trimResult = true, env } = {}) {
-    const stdout = await runFile(file, args, workingDir, {
-        maxBuffer: 1024 * 1024 * 4,
-        env: env === undefined ? undefined : { ...process.env, ...env },
-    });
-    return trimResult ? stdout.trim() : stdout;
-}
-// Runs a program without a shell and resolves with its stdout as raw bytes, with no size limit
-function execFileBuffer(file, args, workingDir) {
-    return runFile(file, args, workingDir, {
-        encoding: 'buffer',
-        maxBuffer: Infinity,
-    });
-}
-function addTrailingSlash(str) {
-    return str.endsWith('/') ? str : str + '/';
-}
-async function pathIsDirectory(path) {
-    const stat = await fs_extra_lib_default().lstat(path);
-    return stat.isDirectory();
-}
-async function write(src, dest, context) {
-    if (typeof context !== 'object') {
-        context = {};
-    }
-    const content = await liquid.renderFile(src, context);
-    await fs_extra_lib_default().outputFile(dest, content);
-}
-// An exclude entry matches the path itself and everything below it, the same way fs.copy skips
-// the whole subtree of a directory that the filter rejects. Entries carry the source prefix
-function isExcluded(exclude, filePath) {
-    return exclude !== undefined
-        && exclude.some((entry) => filePath === entry || filePath.startsWith(addTrailingSlash(entry)));
-}
-function createFilterFunc(file) {
-    return (filePath) => {
-        if (isExcluded(file.exclude, filePath)) {
-            core_debug(`Excluding file ${filePath} since it or a parent directory is excluded.`);
-            return false;
-        }
-        return true;
-    };
-}
-async function copy(src, dest, isDirectory, file) {
-    const deleteOrphaned = isDirectory && file.deleteOrphaned;
-    const filterFunc = createFilterFunc(file);
-    if (file.template) {
-        if (isDirectory) {
-            core_debug(`Render all files in directory ${src} to ${dest}`);
-            const srcFileList = await readfiles(src, {
-                readContents: false,
-                hidden: true,
-            });
-            for (const srcFile of srcFileList) {
-                const srcPath = external_path_.join(src, srcFile);
-                // Exclude entries carry the source prefix, like the paths fs.copy passes to the filter
-                if (!filterFunc(srcPath)) {
-                    continue;
-                }
-                const destPath = external_path_.join(dest, srcFile);
-                await write(srcPath, destPath, file.template);
-            }
-        }
-        else {
-            core_debug(`Render file ${src} to ${dest}`);
-            await write(src, dest, file.template);
-        }
-    }
-    else {
-        core_debug(`Copy ${src} to ${dest}`);
-        await fs_extra_lib_default().copy(src, dest, file.exclude !== undefined ? { filter: filterFunc } : undefined);
-    }
-    // If it is a directory and deleteOrphaned is enabled - check if there are any files that were removed from source dir and remove them in destination dir
-    if (deleteOrphaned) {
-        const srcFileList = await readfiles(src, {
-            readContents: false,
-            hidden: true,
-        });
-        const destFileList = await readfiles(dest, {
-            readContents: false,
-            hidden: true,
-        });
-        for (const destFile of destFileList) {
-            if (destFile.startsWith('.git'))
-                continue;
-            if (srcFileList.indexOf(destFile) === -1) {
-                const filePath = external_path_.join(dest, destFile);
-                core_debug(`Found an orphaned file in the target repo - ${filePath}`);
-                if (isExcluded(file.exclude, external_path_.join(src, destFile))) {
-                    core_debug(`Excluding file ${destFile}`);
-                }
-                else {
-                    core_debug(`Removing file ${destFile}`);
-                    await fs_extra_lib_default().remove(filePath);
-                }
-            }
-        }
-    }
-}
-async function getSyncedFileList(src, dest, isDirectory, file) {
-    const filterFunc = createFilterFunc(file);
-    if (isDirectory) {
-        const srcFileList = await readfiles(src, {
-            readContents: false,
-            hidden: true,
-        });
-        return srcFileList
-            .filter((srcFile) => filterFunc(external_path_.join(src, srcFile)))
-            .map((srcFile) => external_path_.join(dest, srcFile));
-    }
-    else {
-        return [dest];
-    }
-}
-async function remove(src) {
-    core_debug(`RM: ${src}`);
-    return fs_extra_lib_default().remove(src);
-}
-function arrayEquals(array1, array2) {
-    return (Array.isArray(array1)
-        && Array.isArray(array2)
-        && array1.length === array2.length
-        && array1.every((value, i) => value === array2[i]));
-}
-// Custom readfiles implementation to replace node-readfiles. The options are accepted, but hidden
-// files are always listed
-async function readfiles(dir, options = {}) {
-    const files = [];
-    try {
-        const items = await fs_extra_lib_default().readdir(dir);
-        for (const item of items) {
-            const fullPath = external_path_.join(dir, item);
-            const stat = await fs_extra_lib_default().stat(fullPath);
-            if (stat.isDirectory()) {
-                const subFiles = await readfiles(fullPath, options);
-                files.push(...subFiles.map((f) => external_path_.join(item, f)));
-            }
-            else {
-                files.push(item);
-            }
-        }
-    }
-    catch (err) {
-        if (err.code === 'ENOENT') {
-            return [];
-        }
-        throw err;
-    }
-    return files;
 }
 
 ;// CONCATENATED MODULE: ./src/messages.ts

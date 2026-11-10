@@ -5,6 +5,8 @@ import * as yaml from 'js-yaml'
 import * as os from 'os'
 import * as path from 'path'
 
+import { renderDest } from './helpers.ts'
+
 // The token, where GitHub is, and the action's inputs
 export type Config = {
 	GITHUB_TOKEN: string
@@ -76,10 +78,11 @@ export interface SyncTarget {
 }
 
 // A file entry as sync.yml has it. YAML values keep whatever type they were written with: only
-// source and exclude are checked, the others pass through as they are
+// source, exclude and a dest to render are checked, the others pass through as they are
 interface FileEntryYml {
 	source?: unknown
 	dest?: string
+	renderDest?: boolean
 	template?: Template
 	replace?: boolean
 	deleteOrphaned?: boolean
@@ -228,7 +231,7 @@ const parseExclude = (text: unknown, src: string): string[] | undefined => {
 
 // Returns the valid file entries. A missing or empty list yields none, and parseConfig skips the
 // repo with a warning if it ends up without any files
-const parseFiles = (files: unknown, target: string): FileEntry[] => {
+const parseFiles = (files: unknown, repo: Repo): FileEntry[] => {
 	if (!Array.isArray(files)) return []
 
 	return files.flatMap((item: unknown) => {
@@ -238,7 +241,7 @@ const parseFiles = (files: unknown, target: string): FileEntry[] => {
 		if (typeof entry?.source === 'string' && entry.source !== '') {
 			return [{
 				source: entry.source,
-				dest: entry.dest || entry.source,
+				dest: entry.renderDest ? renderDest(entry.dest, repo) : entry.dest || entry.source,
 				template: entry.template === undefined ? TEMPLATE_DEFAULT : entry.template,
 				replace: entry.replace === undefined ? REPLACE_DEFAULT : entry.replace,
 				deleteOrphaned: entry.deleteOrphaned === undefined
@@ -248,7 +251,9 @@ const parseFiles = (files: unknown, target: string): FileEntry[] => {
 			}]
 		}
 
-		core.warning(`Skipping a file entry for ${target} without a source: ${JSON.stringify(item)}`)
+		core.warning(
+			`Skipping a file entry for ${repo.uniqueName} without a source: ${JSON.stringify(item)}`,
+		)
 		return []
 	})
 }
@@ -338,6 +343,11 @@ export async function parseConfig(): Promise<SyncTarget[]> {
 	}
 
 	const result: Record<string, SyncTarget> = {}
+	const addTarget = (name: string, files: unknown) => {
+		const repo = parseRepoName(name)
+		result[repo.uniqueName] ??= { repo, files: [] }
+		result[repo.uniqueName].files.push(...parseFiles(files, repo))
+	}
 
 	Object.keys(configObject).forEach((key) => {
 		// Skip the repo_groups key as it's not a sync target
@@ -351,36 +361,10 @@ export async function parseConfig(): Promise<SyncTarget[]> {
 			const groups = (Array.isArray(rawObject) ? rawObject : [rawObject]) as GroupYml[]
 
 			groups.forEach((group) => {
-				const repos = resolveRepoList(group.repos, repoGroups)
-
-				repos.forEach((name) => {
-					const files = parseFiles(group.files, name)
-					const repo = parseRepoName(name)
-
-					if (result[repo.uniqueName] !== undefined) {
-						result[repo.uniqueName].files.push(...files)
-						return
-					}
-
-					result[repo.uniqueName] = {
-						repo,
-						files,
-					}
-				})
+				resolveRepoList(group.repos, repoGroups).forEach((name) => addTarget(name, group.files))
 			})
 		} else {
-			const files = parseFiles(configObject[key], key)
-			const repo = parseRepoName(key)
-
-			if (result[repo.uniqueName] !== undefined) {
-				result[repo.uniqueName].files.push(...files)
-				return
-			}
-
-			result[repo.uniqueName] = {
-				repo,
-				files,
-			}
+			addTarget(key, configObject[key])
 		}
 	})
 
